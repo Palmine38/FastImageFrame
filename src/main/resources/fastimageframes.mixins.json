@@ -1,0 +1,34 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "fastimageframes.mixin",
+//#if MC >= 26.3
+  "compatibilityLevel": "JAVA_25",
+//#else
+  "compatibilityLevel": "JAVA_21",
+//#endif
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "client": [
+    "BufferBuilderMixin",
+//#if MC < 1.21.9
+    "BufferSourceAccessor",
+//#endif
+    "MapRendererMixin",
+    "MapRenderStateMixin",
+    "TextureManagerAccessor",
+    "MapItemSavedDataAccessor",
+    "MapInstanceMixin",
+    "MapTextureManagerMixin",
+    "ClientPacketListenerMixin",
+    "ItemFrameRendererMixin",
+    "GameRendererMixin",
+    "LevelRendererBakeMixin",
+    "EntityRenderDispatcherMixin",
+    "ItemFrameMixin",
+    "IfcClientMixin",
+    "LevelRendererAccessor",
+    "ViewAreaAccessor"
+  ]
+}

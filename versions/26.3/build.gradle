@@ -1,0 +1,26 @@
+plugins {
+    id 'net.fabricmc.fabric-loom' version "${loom_version}"
+}
+
+version = mod_version
+group = 'fastimageframes'
+
+base {
+    archivesName = "FastImageFrames-${target_name}-fabric"
+}
+
+repositories {
+    maven { url "https://maven.terraformersmc.com/releases/" }
+    maven { url "https://api.modrinth.com/maven" }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${fabric_api_version}"
+    implementation include("maven.modrinth:midnightlib:${midnightlib_version}")
+    compileOnly "com.terraformersmc:modmenu:${modmenu_version}"
+    findProperty('imageframeclient_jar')?.with { localRuntime files(it) }
+}
+
+apply from: '../../gradle/common.gradle'

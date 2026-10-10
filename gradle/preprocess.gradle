@@ -1,0 +1,130 @@
+static List<Integer> parseVersion(String version) {
+    return version.tokenize('.').collect { it as Integer }
+}
+
+static int compareVersions(String a, String b) {
+    List<Integer> x = parseVersion(a)
+    List<Integer> y = parseVersion(b)
+    for (int i = 0; i < Math.max(x.size(), y.size()); i++) {
+        int c = (i < x.size() ? x[i] : 0) <=> (i < y.size() ? y[i] : 0)
+        if (c != 0) {
+            return c
+        }
+    }
+    return 0
+}
+
+static boolean evalTerm(String term, String mc) {
+    def m = term.trim() =~ /^MC\s*(>=|<=|==|!=|>|<)\s*([0-9.]+)$/
+    if (!m.matches()) {
+        throw new GradleException("Bad preprocessor condition: " + term)
+    }
+    int c = compareVersions(mc, m.group(2))
+    switch (m.group(1)) {
+        case '>=': return c >= 0
+        case '<=': return c <= 0
+        case '>': return c > 0
+        case '<': return c < 0
+        case '==': return c == 0
+        default: return c != 0
+    }
+}
+
+static boolean evalCondition(String condition, String mc) {
+    return condition.split(/\|\|/).any { or -> or.split(/&&/).every { evalTerm(it, mc) } }
+}
+
+static String preprocess(String text, String mc, File file) {
+    List<String> out = []
+    List<List<Boolean>> stack = []
+    boolean active = true
+    text.readLines().eachWithIndex { line, index ->
+        String t = line.trim()
+        if (t.startsWith('//#if ')) {
+            boolean taken = active && evalCondition(t.substring(6), mc)
+            stack.add([taken, taken, active])
+            active = taken
+        } else if (t.startsWith('//#elif ')) {
+            List<Boolean> top = stack.last()
+            boolean taken = top[2] && !top[1] && evalCondition(t.substring(8), mc)
+            stack[-1] = [taken, top[1] || taken, top[2]]
+            active = taken
+        } else if (t == '//#else') {
+            List<Boolean> top = stack.last()
+            boolean taken = top[2] && !top[1]
+            stack[-1] = [taken, true, top[2]]
+            active = taken
+        } else if (t == '//#endif') {
+            if (stack.isEmpty()) {
+                throw new GradleException("Unbalanced //#endif in ${file} line ${index + 1}")
+            }
+            active = stack.removeLast()[2]
+        } else if (active) {
+            out.add(line)
+        }
+    }
+    if (!stack.isEmpty()) {
+        throw new GradleException("Missing //#endif in ${file}")
+    }
+    String result = out.join('\n') + '\n'
+    if (compareVersions(mc, '1.21.11') < 0) {
+        result = result
+                .replace('net.minecraft.client.renderer.rendertype.RenderTypes', 'net.minecraft.client.renderer.RenderType')
+                .replace('net.minecraft.client.renderer.rendertype.RenderType', 'net.minecraft.client.renderer.RenderType')
+                .replaceAll(/\bRenderTypes\b/, 'RenderType')
+                .replaceAll(/\bIdentifier\b/, 'ResourceLocation')
+    }
+    return result
+}
+
+def mcVersion = project.minecraft_version
+def sharedSrc = project.hasProperty('shared_src_dir') ? file(project.shared_src_dir) : rootProject.file('../../src')
+
+['main', 'gametest'].each { set ->
+    def taskName = "preprocess${set.capitalize()}"
+    def outDir = layout.buildDirectory.dir("preprocessed/${set}")
+    tasks.register(taskName) {
+        def input = new File(sharedSrc, set)
+        inputs.dir(input)
+        inputs.property('minecraft_version', mcVersion)
+        outputs.dir(outDir)
+        doLast {
+            File target = outDir.get().asFile
+            target.deleteDir()
+            input.eachFileRecurse { File source ->
+                if (source.isDirectory()) {
+                    return
+                }
+                String relative = input.toPath().relativize(source.toPath()).toString()
+                File dest = new File(target, relative)
+                dest.parentFile.mkdirs()
+                String name = source.name
+                if (name.endsWith('.java') || name.endsWith('.json')) {
+                    dest.setText(preprocess(source.getText('UTF-8'), mcVersion, source), 'UTF-8')
+                } else {
+                    dest.bytes = source.bytes
+                }
+            }
+        }
+    }
+}
+
+sourceSets {
+    main {
+        java.srcDirs = [layout.buildDirectory.dir('preprocessed/main/java')]
+        resources.srcDirs = [layout.buildDirectory.dir('preprocessed/main/resources')]
+    }
+}
+
+afterEvaluate {
+    if (sourceSets.findByName('gametest') != null) {
+        sourceSets.gametest.java.srcDirs = [layout.buildDirectory.dir('preprocessed/gametest/java')]
+        sourceSets.gametest.resources.srcDirs = [layout.buildDirectory.dir('preprocessed/gametest/resources')]
+        tasks.named('compileGametestJava') { dependsOn 'preprocessGametest' }
+        tasks.named('processGametestResources') { dependsOn 'preprocessGametest' }
+    }
+}
+
+tasks.named('compileJava') { dependsOn 'preprocessMain' }
+tasks.named('processResources') { dependsOn 'preprocessMain' }
+tasks.matching { it.name == 'sourcesJar' }.configureEach { dependsOn 'preprocessMain' }

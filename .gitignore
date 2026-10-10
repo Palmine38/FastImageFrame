@@ -1,0 +1,12 @@
+.gradle/
+build/
+run/
+dist/
+test-results/
+test-jars/
+*.log
+.idea/
+*.iml
+.vscode/
+__pycache__/
+README_long.md

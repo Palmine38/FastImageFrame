@@ -1,0 +1,52 @@
+processResources {
+    def props = [
+            version             : "${project.version}+${project.target_name}",
+            minecraft_dependency: project.minecraft_dependency,
+            java_version        : project.java_version
+    ]
+    inputs.properties(props)
+    filesMatching('fabric.mod.json') {
+        expand(props)
+    }
+}
+
+int javaVersion = project.java_version as Integer
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = javaVersion
+    it.options.encoding = 'UTF-8'
+}
+
+java {
+    sourceCompatibility = JavaVersion.toVersion(javaVersion)
+    targetCompatibility = JavaVersion.toVersion(javaVersion)
+}
+
+jar {
+    from(files('../../COPYING', '../../COPYING.LESSER')) {
+        rename { "${it}_FastImageFrames" }
+    }
+}
+
+fabricApi {
+    configureTests {
+        createSourceSet = true
+        modId = 'fastimageframes-gametest'
+        enableGameTests = false
+        enableClientGameTests = true
+        eula = false
+    }
+}
+
+findProperty('extra_mods_dir')?.with { dir ->
+    dependencies {
+        add(configurations.findByName('modLocalRuntime') ? 'modLocalRuntime' : 'localRuntime', fileTree(dir: dir, include: '*.jar'))
+    }
+}
+
+apply from: '../../gradle/preprocess.gradle'
+
+tasks.register('copyJarToDist', Copy) {
+    from(tasks.findByName('remapJar') ?: tasks.named('jar').get())
+    into(rootProject.file('../../dist'))
+}
