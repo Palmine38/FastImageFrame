@@ -82,7 +82,12 @@ public class MapRendererMixin {
     //#else
     private void fif$pickSlot(MapRenderState state, PoseStack poseStack, MultiBufferSource buffers, boolean active, int light, CallbackInfo ci) {
     //#endif
-        fif$slot = FifConfig.atlasActive() ? MapAtlas.INSTANCE.slotFor(state) : null;
+        if (FifConfig.atlasActive()) {
+            fif$slot = MapAtlas.INSTANCE.slotFor(state);
+        } else {
+            fif$slot = null;
+            MapAtlas.releaseImmediatelyFast(state);
+        }
     }
 
     @WrapOperation(method = "render", at = @At(value = "INVOKE", target = TEXT, ordinal = 0))

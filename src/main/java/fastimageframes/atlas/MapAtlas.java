@@ -12,6 +12,7 @@ import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
 import it.unimi.dsi.fastutil.ints.IntSet;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
@@ -23,6 +24,9 @@ import net.minecraft.world.level.material.MapColor;
 import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -33,6 +37,8 @@ public final class MapAtlas {
     public static final int TILE = 128;
     private static final String MAP_TEXTURE_PREFIX = "map/";
     private static final String IMMEDIATELY_FAST = "immediatelyfast";
+    private static final Class<?> IMMEDIATELY_FAST_STATE = immediatelyFastClass("injection.interfaces.IMapRenderState");
+    private static final MethodHandle CLEAR_IMMEDIATELY_FAST_ATLAS = clearImmediatelyFastAtlasHandle();
 
     public final class Page {
         final int size;
@@ -106,6 +112,7 @@ public final class MapAtlas {
     public Slot slotFor(MapRenderState state) {
         Identifier texture = state.texture;
         if (texture == null || !IMMEDIATELY_FAST.equals(texture.getNamespace())) {
+            releaseImmediatelyFast(state);
             return getSlot(texture);
         }
         int mapId = ((MapRenderStateData) state).fif$mapId();
@@ -115,14 +122,50 @@ public final class MapAtlas {
         Identifier hd = FifConfig.hdActive() ? HdMaps.INSTANCE.loadedTexture(mapId) : IfcLink.loadedHdTexture(mapId);
         if (hd != null) {
             state.texture = hd;
+            releaseImmediatelyFast(state);
             return null;
         }
         Identifier own = mapTextureId(mapId);
         Slot slot = getSlot(own);
         if (slot != null) {
             state.texture = own;
+            releaseImmediatelyFast(state);
         }
         return slot;
+    }
+
+    public static void releaseImmediatelyFast(MapRenderState state) {
+        if (CLEAR_IMMEDIATELY_FAST_ATLAS == null || !IMMEDIATELY_FAST_STATE.isInstance(state) || (state.texture != null && IMMEDIATELY_FAST.equals(state.texture.getNamespace()))) {
+            return;
+        }
+        try {
+            CLEAR_IMMEDIATELY_FAST_ATLAS.invokeExact(state);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static Class<?> immediatelyFastClass(String name) {
+        if (!FabricLoader.getInstance().isModLoaded(IMMEDIATELY_FAST)) {
+            return null;
+        }
+        try {
+            return Class.forName("net.raphimc.immediatelyfast." + name);
+        } catch (ReflectiveOperationException | LinkageError e) {
+            return null;
+        }
+    }
+
+    private static MethodHandle clearImmediatelyFastAtlasHandle() {
+        Class<?> atlasTexture = immediatelyFastClass("feature.map_atlas_generation.MapAtlasTexture");
+        if (IMMEDIATELY_FAST_STATE == null || atlasTexture == null) {
+            return null;
+        }
+        try {
+            MethodHandle setter = MethodHandles.publicLookup().findVirtual(IMMEDIATELY_FAST_STATE, "immediatelyFast$setAtlasTexture", MethodType.methodType(void.class, atlasTexture));
+            return MethodHandles.insertArguments(setter, 1, (Object) null).asType(MethodType.methodType(void.class, MapRenderState.class));
+        } catch (ReflectiveOperationException | LinkageError e) {
+            return null;
+        }
     }
 
     public Slot getSlot(Identifier texture) {

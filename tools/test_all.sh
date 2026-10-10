@@ -19,6 +19,7 @@ for name in "${versions[@]}"; do
     fi
     [ -n "$EXTRA_MODS_DIR" ] && extra+=("-Pextra_mods_dir=$EXTRA_MODS_DIR")
     [ -n "$SHARED_SRC_DIR" ] && extra+=("-Pshared_src_dir=$SHARED_SRC_DIR")
+    [ -n "$GRADLE_ARGS" ] && extra+=($GRADLE_ARGS)
     echo "== $name ${extra[*]}"
     rm -rf "$dir/build/run/clientGameTest"
     log="test-results/$name.log"

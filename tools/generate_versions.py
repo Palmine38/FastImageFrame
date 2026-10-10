@@ -2,7 +2,7 @@ import os
 import shutil
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MOD_VERSION = "1.3.0"
+MOD_VERSION = "1.3.1"
 
 TARGETS = {
     "1.21.4": ("1.21.4", ">=1.21.4 <1.21.5", "1.13-SNAPSHOT", "8.14.1", 21, "0.17.3", "0.119.4+1.21.4", "1.7.3+1.21.4-fabric", "13.0.4", True),

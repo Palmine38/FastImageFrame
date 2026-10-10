@@ -74,9 +74,10 @@ or Done; Cancel leaves the settings as they were.
 
 - **ImmediatelyFast**: ImmediatelyFast has its own map atlas, which replaces the texture of every map. Fast
   ImageFrames then fills its atlas from the map colors, and when it draws a map in the world it takes the map back
-  from ImmediatelyFast's atlas (into its own atlas or its HD texture). Maps shown in screens and tooltips stay with
-  ImmediatelyFast. With ImmediatelyFast up to 1.21.8, the entity buffers are ImmediatelyFast's, so frame batching is
-  left to it.
+  from ImmediatelyFast's atlas (into its own atlas or its HD texture) and clears ImmediatelyFast's atlas position on
+  the map state, so that ImmediatelyFast 1.9 to 1.11 (1.21.5 to 1.21.7) leaves its UVs alone. Maps shown in screens
+  and tooltips stay with ImmediatelyFast. With ImmediatelyFast up to 1.21.8, the entity buffers are ImmediatelyFast's,
+  so frame batching is left to it.
 
 ### ImageFrame Client HD images
 
