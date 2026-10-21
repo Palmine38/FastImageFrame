@@ -99,13 +99,23 @@ def sharedSrc = project.hasProperty('shared_src_dir') ? file(project.shared_src_
                 File dest = new File(target, relative)
                 dest.parentFile.mkdirs()
                 String name = source.name
-                if (name.endsWith('.java') || name.endsWith('.json')) {
+                if (name.endsWith('.java') || name.endsWith('.json') || name.endsWith('.accesswidener')) {
                     dest.setText(preprocess(source.getText('UTF-8'), mcVersion, source), 'UTF-8')
                 } else {
                     dest.bytes = source.bytes
                 }
             }
         }
+    }
+}
+
+def accessWidener = new File(sharedSrc, 'main/resources/fastimageframes.accesswidener')
+if (accessWidener.exists()) {
+    File preprocessedWidener = layout.buildDirectory.file('fastimageframes.accesswidener').get().asFile
+    preprocessedWidener.parentFile.mkdirs()
+    preprocessedWidener.setText(preprocess(accessWidener.getText('UTF-8'), mcVersion, accessWidener), 'UTF-8')
+    loom {
+        accessWidenerPath = preprocessedWidener
     }
 }
 

@@ -49,6 +49,13 @@ or Done; Cancel leaves the settings as they were.
   the recorded vertices are replayed as a whole and the entities are skipped. Each frame is checked 5 times per
   second (map, rotation, light, invisibility, HD texture) and its section is rebuilt when it changed. A baked
   section is written to the game buffers as one block copy where only the positions move with the camera.
+  - Without a shader pack, a baked section is uploaded once to video memory and drawn from there (one draw per
+    render type and section), so nothing is copied on the CPU while it does not change. From 1.21.6 the vertices
+    stay relative to the section and the game's vertex shader is derived at runtime so that fog is computed from the
+    camera offset instead of the raw position; on 1.21.4 and 1.21.5 the section is uploaded again when the camera
+    has moved more than the fog allows (half a block at most). On 26.2 the sections are drawn with the solid
+    features, on 26.3 inside the game's solid, translucent and improved transparency passes. GIF walls upload their
+    section again when a map is swapped. Sorted (translucent) render types and shader packs keep the CPU copy.
   - The backs of the frames (about 70 % of the vertices of a wall) are kept apart and only drawn when the camera is
     behind the wall.
   - Sections hidden behind blocks are skipped, with the same visibility the game uses for terrain (Sodium's when it
@@ -61,9 +68,11 @@ or Done; Cancel leaves the settings as they were.
   changes another way twice within 2 seconds is drawn the normal way until it has been still for 5 seconds.
 - **Baked item frames** (1.21.4 to 1.21.11): item frames holding any item (and empty ones) are baked like map walls,
   with every kind of item model (block items, flat items, enchanted items with their glint, shields, banners,
-  chests, skulls...). Five times per second the item is drawn again into a fingerprint, so items whose look changes
-  without a server update (compasses, clocks) are rebuilt. From 26.1, where item rendering was rewritten, these
-  frames are drawn the normal way.
+  chests, skulls...). The item is drawn again into a fingerprint to catch items whose look changes without a server
+  update (compasses, clocks). This happens 5 times per second only during the first 10 seconds of an item and for
+  items already seen changing on their own; other frames are fingerprinted about every 2 seconds and in between
+  only compare a cheap key (item, components, rotation, facing, invisibility, light). From 26.1, where item
+  rendering was rewritten, these frames are drawn the normal way.
 - **Cheaper per map work**: no item model resolved for frames that show a map, no render type lookup for maps drawn
   from the atlas, no walk over empty map decorations, no map instance lookup with a new lambda.
 - **No redundant map texture rebuilds**: vanilla rebuilds and uploads the whole texture of a map for every map
@@ -131,7 +140,26 @@ On a real Paper server (1.21.6, 1920x1009, a wall of 2160 copies of a 4000 px HD
 Client alone, about 800 FPS with Fast ImageFrames.
 
 A 20x20 wall of item frames holding 12 kinds of items, median of 3 rounds: 90 FPS vanilla, 115 FPS without baked item
-frames, 315 FPS with them (1.21.8); 183 FPS vanilla, 483 FPS with them (1.21.4).
+frames, 315 FPS with them (1.21.8); 183 FPS vanilla, 483 FPS with them (1.21.4). With 1.4.0 on 1.21.8: 94 FPS
+vanilla, 512 FPS with them.
+
+GPU drawing of baked sections (1.4.0, 1.21.8), GPU and CPU copy alternated in the same game, averages of 3 to 4
+rounds:
+
+| Scene | CPU copy | GPU |
+|---|---|---|
+| 40x40 wall of maps | 759 FPS | 807 FPS |
+| 40x40 wall of maps, invisible frames | 809 FPS | 886 FPS |
+| 20x20 animated wall, one image per tick | 883 FPS | 924 FPS |
+| 400 item frames holding 12 kinds of items | 375 FPS | 562 FPS |
+
+Same comparison with 1.4.1 (GPU drawing on every version), 4 rounds:
+
+| Minecraft | wall of maps, CPU copy | GPU | invisible frames, CPU copy | GPU | item frames, CPU copy | GPU |
+|---|---|---|---|---|---|---|
+| 1.21.8 | 913 FPS | 932 FPS | 783 FPS | 841 FPS | 365 FPS | 581 FPS |
+| 1.21.10 | 799 FPS | 870 FPS | 845 FPS | 927 FPS | 482 FPS | 638 FPS |
+| 26.3 | 953 FPS | 1287 FPS | 1020 FPS | 1347 FPS | not baked | not baked |
 
 ## Building
 
@@ -178,7 +206,10 @@ The in-game client gametest (`./gradlew runClientGameTest`, `[FIF]` lines in the
    item frames with items;
 5. opens the settings screen: pages, a tooltip, Cancel keeps the settings, the Custom preset, Done saves.
 
-`FIF_VISUAL_ONLY=1`, `FIF_BENCH_ONLY=1`, `FIF_ITEMS_ONLY=1`, `FIF_SCREEN_ONLY=1` and `FIF_DIAG=1` narrow the run.
+`FIF_VISUAL_ONLY=1`, `FIF_BENCH_ONLY=1`, `FIF_ITEMS_ONLY=1`, `FIF_ANIM_ONLY=1`, `FIF_SCREEN_ONLY=1` and `FIF_DIAG=1`
+narrow the run. `FIF_GPU_AB=1` alternates GPU drawing and CPU copy of the baked sections in the same game (map wall,
+invisible frames, item frames; the animated wall with `FIF_ANIM_ONLY`). The JVM property
+`-Dfastimageframes.cpuReplay=true` turns GPU drawing off.
 `SHADER_PACK=<zip>` turns on that Iris shader pack (with Sodium and Iris in `EXTRA_MODS_DIR`).
 
 ```bash

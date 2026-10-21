@@ -13,7 +13,8 @@ vanilla screenshots.
 - **Map atlas**: map textures are packed into a few large textures, so a whole wall of maps is drawn in a handful of
   draw calls instead of one per map.
 - **Baked map walls**: frames that don't change are drawn once and replayed like terrain, instead of being processed
-  one by one every frame. Frames are checked 5 times per second and rebuilt as soon as something changes.
+  one by one every frame. Frames are checked several times per second and rebuilt as soon as something changes. Without
+  a shader pack, baked walls stay in video memory and are drawn straight from there.
 - **Animated images (ImageFrame GIFs)** stay baked while they play: only the texture coordinates are swapped.
 - **Baked item frames** (1.21.4 to 1.21.11): frames holding any item (blocks, tools, enchanted items, banners,
   shields, compasses, clocks...) are baked too.
@@ -41,7 +42,7 @@ In-game test, 854x480 window, RTX 4060 laptop, Minecraft 1.21.8:
 | Wall of 1600 maps (40x40) | 13 FPS | 725 FPS |
 | Wall of 1600 HD maps with ImageFrame Client | 18 FPS | 656 FPS |
 | Animated wall, 400 maps, one image per tick | 60 FPS | 687 FPS |
-| 400 item frames holding 12 kinds of items | 90 FPS | 315 FPS |
+| 400 item frames holding 12 kinds of items | 94 FPS | 512 FPS |
 
 On a real Paper server with a wall of 2160 HD images (4000 px each): about 30 FPS with ImageFrame Client alone,
 about 800 FPS with Fast ImageFrames.

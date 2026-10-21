@@ -39,6 +39,7 @@ import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Matrix4fc;
 //#if MC >= 1.21.9 && MC < 26.1
 import net.minecraft.client.renderer.block.ModelBlockRenderer;
 import net.minecraft.client.renderer.block.model.BlockStateModel;
@@ -100,6 +101,8 @@ public final class BakedFrames {
         final Map<ItemFrame, MapQuad> quads = new Reference2ObjectOpenHashMap<>();
         boolean dirty = true;
         boolean hasData;
+        int version;
+        SectionMesh mesh;
 
         Section(long key) {
             this.key = key;
@@ -181,6 +184,8 @@ public final class BakedFrames {
     private static final long ANIMATION_WINDOW_TICKS = 40;
     private static final long ANIMATION_HOLD_TICKS = 100;
     private static final long REPORT_EVERY_TICKS = 60 * 20;
+    private static final int PROBE_EVERY_TICKS = 32;
+    private static final long SETTLE_TICKS = 200;
     private final java.util.Set<RenderType> decorationLayers = new ReferenceOpenHashSet<>();
     private String example = "";
     private String lastRejection = "";
@@ -258,6 +263,13 @@ public final class BakedFrames {
 
     public void onFrameStart() {
         frame++;
+        //#if MC < 26.2
+        SectionMesh.beginFrame();
+        //#endif
+    }
+
+    public static void beginGpuFrame() {
+        SectionMesh.beginFrame();
     }
 
     private Section shadowSection(Entity entity) {
@@ -328,6 +340,14 @@ public final class BakedFrames {
         return vertices.toString();
     }
 
+    public static void setGpu(boolean enabled) {
+        SectionMesh.enabled = enabled;
+    }
+
+    public int gpuDraws() {
+        return SectionMesh.draws;
+    }
+
     public int bakedCount() {
         int count = 0;
         for (Section section : sections.values()) {
@@ -348,6 +368,7 @@ public final class BakedFrames {
         if (entity instanceof ItemFrame frame) {
             ((BakeableFrame) frame).fif$setBaked(false);
             ((BakeableFrame) frame).fif$setSignature(NOT_BAKEABLE);
+            ((BakeableFrame) frame).fif$setProbe(0, tick, Long.MIN_VALUE, false, NOT_BAKEABLE);
             Section section = sections.computeIfAbsent(SectionPos.asLong(frame.blockPosition()), Section::new);
             section.frames.add(frame);
             section.dirty = true;
@@ -363,6 +384,7 @@ public final class BakedFrames {
                 section.frames.remove(frame);
                 markDirty(section);
                 if (section.frames.isEmpty()) {
+                    closeMesh(section);
                     sections.remove(key);
                 }
             }
@@ -414,6 +436,7 @@ public final class BakedFrames {
             return false;
         }
         quad.show(section.layers.computeIfAbsent(new Layer(lastSlot.layer(), quad.layer.entity(), quad.layer.blockEntity(), quad.layer.item()), BakedFrames::recorder), lastSlot);
+        section.version++;
         bakeable.fif$setSignature(signature);
         return true;
     }
@@ -621,6 +644,34 @@ public final class BakedFrames {
         if (section == null || minecraft.getEntityRenderDispatcher().camera == null) {
             return NOT_BAKEABLE;
         }
+        BakeableFrame bakeable = (BakeableFrame) frame;
+        int key = itemKey(minecraft, frame, stack);
+        boolean sameKey = key == bakeable.fif$itemKey() && bakeable.fif$nextProbe() != Long.MIN_VALUE;
+        if (sameKey && !bakeable.fif$volatile() && tick - bakeable.fif$keySince() > SETTLE_TICKS && tick < bakeable.fif$nextProbe()) {
+            return bakeable.fif$probed();
+        }
+        int signature = probe(minecraft, frame, section, camera, stack);
+        long next = tick + PROBE_EVERY_TICKS + (frame.getId() & (PROBE_EVERY_TICKS - 1));
+        if (!sameKey) {
+            bakeable.fif$setProbe(key, tick, next, false, signature);
+        } else {
+            boolean changing = bakeable.fif$volatile() || tick - bakeable.fif$keySince() > SETTLE_TICKS && signature != bakeable.fif$probed();
+            bakeable.fif$setProbe(key, bakeable.fif$keySince(), next, changing, signature);
+        }
+        return signature;
+    }
+
+    private static int itemKey(Minecraft minecraft, ItemFrame frame, ItemStack stack) {
+        int key = System.identityHashCode(stack.getItem());
+        key = key * 31 + stack.getComponentsPatch().hashCode();
+        key = key * 31 + frame.getRotation();
+        key = key * 31 + frame.getDirection().ordinal();
+        key = key * 31 + (frame.isInvisible() ? 1 : 0);
+        key = key * 31 + minecraft.getEntityRenderDispatcher().getPackedLightCoords(frame, 1.0F);
+        return key;
+    }
+
+    private int probe(Minecraft minecraft, ItemFrame frame, Section section, Vec3 camera, ItemStack stack) {
         for (VertexRecorder probe : probes.values()) {
             probe.clear();
         }
@@ -699,6 +750,7 @@ public final class BakedFrames {
 
     private void bake(Minecraft minecraft, Section section, Vec3 camera) {
         section.dirty = false;
+        section.version++;
         for (VertexRecorder layer : section.layers.values()) {
             layer.clear();
         }
@@ -971,6 +1023,9 @@ public final class BakedFrames {
         Vec3 camera = Cameras.position();
         Frustum frustum = this.frustum;
         SectionCulling.begin(camera);
+        Matrix4fc base = poseStack.last().pose();
+        boolean gpu = !shaders && SectionMesh.usable() && (base.properties() & Matrix4fc.PROPERTY_TRANSLATION) != 0;
+        Vec3 placed = camera.subtract(base.m30(), base.m31(), base.m32());
         for (Section section : sections.values()) {
             if (!section.hasData || section.dirty || frustum != null && !frustum.isVisible(section.bounds)
                     || !SectionCulling.isVisible(section.key, section.originX, section.originY, section.originZ)) {
@@ -979,23 +1034,51 @@ public final class BakedFrames {
             float ox = (float) (section.originX - camera.x);
             float oy = (float) (section.originY - camera.y);
             float oz = (float) (section.originZ - camera.z);
+            SectionMesh mesh = gpu ? mesh(section, camera) : null;
             for (Map.Entry<Layer, VertexRecorder> layer : section.layers.entrySet()) {
                 VertexRecorder recorder = layer.getValue();
-                if (!recorder.data.isEmpty()) {
+                if (!recorder.data.isEmpty() && (mesh == null || !mesh.has(layer.getKey().type()))) {
                     ids(layer.getKey());
                     out.submitCustomGeometry(poseStack, layer.getKey().type(), (pose, consumer) -> recorder.replay(consumer, ox, oy, oz));
                 }
             }
+            int visibleBacks = 0;
             for (int i = 0; i < 12; i++) {
                 if (backVisible(section, i, camera)) {
+                    if (mesh != null && mesh.hasBack(i)) {
+                        visibleBacks |= 1 << i;
+                        continue;
+                    }
                     VertexRecorder recorder = section.backs[i];
                     backIds(section, i);
                     out.submitCustomGeometry(poseStack, FifLayers.FRAME_LAYER, (pose, consumer) -> recorder.replay(consumer, ox, oy, oz));
                 }
             }
+            if (mesh != null) {
+                mesh.queue(placed, visibleBacks);
+            }
         }
         clearIds();
+        //#if MC < 26.2
+        SectionMesh.draw();
+        //#endif
     }
+
+    //#if MC >= 26.2
+    public static void drawGpu() {
+        SectionMesh.draw();
+    }
+    //#endif
+
+    //#if MC >= 26.3
+    public static void prepareGpu() {
+        SectionMesh.prepare();
+    }
+
+    public static void drawGpu(com.mojang.renderpearl.api.commands.RenderPass pass, boolean sorted, net.minecraft.client.renderer.oit.OitStage stage, boolean last) {
+        SectionMesh.draw(pass, sorted, stage, last);
+    }
+    //#endif
 
     public static final class BakedFrameState extends EntityRenderState {
         final Section section;
@@ -1058,6 +1141,7 @@ public final class BakedFrames {
         }
         Frustum frustum = this.frustum;
         SectionCulling.begin(camera);
+        boolean gpu = !shaders && SectionMesh.usable();
         for (Section section : sections.values()) {
             if (!section.hasData || section.dirty || frustum != null && !frustum.isVisible(section.bounds)
                     || !SectionCulling.isVisible(section.key, section.originX, section.originY, section.originZ)) {
@@ -1066,22 +1150,34 @@ public final class BakedFrames {
             float ox = (float) (section.originX - camera.x);
             float oy = (float) (section.originY - camera.y);
             float oz = (float) (section.originZ - camera.z);
+            SectionMesh mesh = gpu ? mesh(section, camera) : null;
             for (Map.Entry<Layer, VertexRecorder> layer : section.layers.entrySet()) {
-                if (!layer.getValue().data.isEmpty()) {
+                if (!layer.getValue().data.isEmpty() && (mesh == null || !mesh.has(layer.getKey().type()))) {
                     ids(layer.getKey());
                     VertexConsumer consumer = buffers.getBuffer(type(layer.getKey().type()));
                     layer.getValue().replay(consumer, ox, oy, oz);
                 }
             }
+            int visibleBacks = 0;
             for (int i = 0; i < 12; i++) {
                 if (backVisible(section, i, camera)) {
+                    if (mesh != null && mesh.hasBack(i)) {
+                        visibleBacks |= 1 << i;
+                        continue;
+                    }
                     backIds(section, i);
                     section.backs[i].replay(buffers.getBuffer(type(FifLayers.FRAME_LAYER)), ox, oy, oz);
                 }
             }
+            if (mesh != null) {
+                mesh.queue(camera, visibleBacks);
+            }
         }
         clearIds();
+        SectionMesh.draw();
     }
+
+
 
     private RenderType type(RenderType type) {
         return shaders ? IrisCompat.wrapEntity(type) : type;
@@ -1113,6 +1209,13 @@ public final class BakedFrames {
         return true;
     }
     //#endif
+
+    private static SectionMesh mesh(Section section, Vec3 camera) {
+        if (section.mesh == null) {
+            section.mesh = new SectionMesh();
+        }
+        return section.mesh.ready(section.layers, section.backs, section.version, section.originX, section.originY, section.originZ, camera) ? section.mesh : null;
+    }
 
     private void ids(Layer layer) {
         if (shaders) {
@@ -1175,10 +1278,22 @@ public final class BakedFrames {
             section.layers.clear();
             clearBacks(section);
             section.quads.clear();
+            section.version++;
+            closeMesh(section);
+        }
+    }
+
+    private static void closeMesh(Section section) {
+        if (section.mesh != null) {
+            section.mesh.close();
+            section.mesh = null;
         }
     }
 
     private void clear() {
+        for (Section section : sections.values()) {
+            closeMesh(section);
+        }
         decorationLayers.clear();
         sections.clear();
         mapFrames.clear();

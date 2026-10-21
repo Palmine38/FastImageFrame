@@ -34,6 +34,21 @@ public class ItemFrameMixin implements BakeableFrame {
     @Unique
     private Object fif$slot;
 
+    @Unique
+    private int fif$itemKey;
+
+    @Unique
+    private long fif$keySince;
+
+    @Unique
+    private long fif$nextProbe = Long.MIN_VALUE;
+
+    @Unique
+    private boolean fif$volatile;
+
+    @Unique
+    private int fif$probed;
+
     @Inject(method = "onSyncedDataUpdated", at = @At("TAIL"))
     private void fif$dataChanged(EntityDataAccessor<?> accessor, CallbackInfo ci) {
         BakedFrames.INSTANCE.onFrameChanged((ItemFrame) (Object) this);
@@ -79,6 +94,40 @@ public class ItemFrameMixin implements BakeableFrame {
     public void fif$setShape(int geometry, Object slot) {
         fif$geometry = geometry;
         fif$slot = slot;
+    }
+
+    @Override
+    public int fif$itemKey() {
+        return fif$itemKey;
+    }
+
+    @Override
+    public long fif$keySince() {
+        return fif$keySince;
+    }
+
+    @Override
+    public long fif$nextProbe() {
+        return fif$nextProbe;
+    }
+
+    @Override
+    public boolean fif$volatile() {
+        return fif$volatile;
+    }
+
+    @Override
+    public int fif$probed() {
+        return fif$probed;
+    }
+
+    @Override
+    public void fif$setProbe(int itemKey, long keySince, long nextProbe, boolean changing, int probed) {
+        fif$probed = probed;
+        fif$itemKey = itemKey;
+        fif$keySince = keySince;
+        fif$nextProbe = nextProbe;
+        fif$volatile = changing;
     }
 
     @Override

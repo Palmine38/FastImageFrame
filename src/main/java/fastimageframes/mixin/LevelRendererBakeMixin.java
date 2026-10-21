@@ -38,4 +38,11 @@ public class LevelRendererBakeMixin {
     }
     //#endif
 
+    //#if MC >= 26.3
+    @Inject(method = "prepareTranslucents", at = @At("HEAD"))
+    private void fif$prepareGpu(CallbackInfo ci) {
+        BakedFrames.prepareGpu();
+    }
+    //#endif
+
 }

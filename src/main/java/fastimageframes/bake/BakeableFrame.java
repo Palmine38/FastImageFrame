@@ -26,4 +26,16 @@ public interface BakeableFrame {
 
     void fif$setShape(int geometry, Object slot);
 
+    int fif$itemKey();
+
+    long fif$keySince();
+
+    long fif$nextProbe();
+
+    boolean fif$volatile();
+
+    int fif$probed();
+
+    void fif$setProbe(int itemKey, long keySince, long nextProbe, boolean changing, int probed);
+
 }

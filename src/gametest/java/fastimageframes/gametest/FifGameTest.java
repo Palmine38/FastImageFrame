@@ -114,6 +114,29 @@ public class FifGameTest implements FabricClientGameTest {
             }
             return;
         }
+        if (System.getenv("FIF_ANIM_ONLY") != null) {
+            try (TestSingleplayerContext world = context.worldBuilder().create()) {
+                prepareWorld(world);
+                context.waitTicks(200);
+                waitForChunks(world);
+                animatedWallBenchmark(context, world);
+                logResults();
+                context.waitTicks(100);
+            }
+            return;
+        }
+        if (System.getenv("FIF_GPU_AB") != null) {
+            try (TestSingleplayerContext world = context.worldBuilder().create()) {
+                prepareWorld(world);
+                context.waitTicks(200);
+                waitForChunks(world);
+                visualChecks(context, world);
+                gpuAb(context, world);
+                logResults();
+                context.waitTicks(100);
+            }
+            return;
+        }
         if (System.getenv("FIF_BENCH_ONLY") != null) {
             benchmarkOnly(context);
             return;
@@ -702,6 +725,10 @@ public class FifGameTest implements FabricClientGameTest {
         results.add(measure(context, "animated 20x20 wall, 7 images | Fast ImageFrames, not baked"));
         setBake(context, true);
         results.add(measure(context, "animated 20x20 wall, 7 images | Fast ImageFrames"));
+        if (System.getenv("FIF_GPU_AB") != null) {
+            gpuRounds(context, "animated 20x20 wall, 7 images");
+            context.runOnClient(client -> BakedFrames.setGpu(true));
+        }
         int baked = context.computeOnClient(client -> BakedFrames.INSTANCE.bakedCount());
         String reasons = context.computeOnClient(client -> BakedFrames.INSTANCE.debugReasons());
         check(baked >= size * size, "animated wall stays baked while it plays: " + baked + " frames (not baked since start: " + reasons + ")");
@@ -829,6 +856,64 @@ public class FifGameTest implements FabricClientGameTest {
         results.add(measure(context, "same view, no frames         | Fast ImageFrames"));
     }
 
+    private void gpuAb(ClientGameTestContext context, TestSingleplayerContext world) {
+        int wallZ = baseZ - 4;
+        world.getServer().runOnServer(server -> {
+            ServerLevel level = server.overworld();
+            int half = WALL / 2;
+            Random random = new Random(1);
+            for (int row = 0; row < WALL; row++) {
+                for (int col = 0; col < WALL; col++) {
+                    level.setBlockAndUpdate(new BlockPos(baseX - half + col, baseY + row, wallZ - 1), Blocks.STONE.defaultBlockState());
+                    wallFrames.add(spawnFrame(level, new BlockPos(baseX - half + col, baseY + row, wallZ), Direction.SOUTH, randomMap(level, random, false, true), false));
+                }
+            }
+        });
+        world.getServer().runCommand(String.format(Locale.ROOT, "tp @a %.1f %d %.1f 180 -25", baseX + 0.5, baseY, wallZ + VIEW_DISTANCE));
+        context.waitTicks(100);
+        waitForChunks(world);
+        gpuRounds(context, "1600 maps, visible frames  ");
+        world.getServer().runOnServer(server -> wallFrames.forEach(frame -> frame.setInvisible(true)));
+        context.waitTicks(40);
+        gpuRounds(context, "1600 maps, invisible frames");
+        world.getServer().runOnServer(server -> {
+            wallFrames.forEach(ItemFrame::discard);
+            wallFrames.clear();
+        });
+        context.waitTicks(40);
+        int itemZ = baseZ - 40;
+        int size = 20;
+        List<ItemFrame> frames = new ArrayList<>();
+        world.getServer().runOnServer(server -> {
+            ServerLevel level = server.overworld();
+            ItemStack[] items = itemSamples();
+            for (int row = 0; row < size; row++) {
+                for (int col = 0; col < size; col++) {
+                    BlockPos pos = new BlockPos(baseX - size / 2 + col, baseY + row, itemZ);
+                    level.setBlockAndUpdate(pos.north(), Blocks.STONE.defaultBlockState());
+                    frames.add(spawnItemFrame(level, pos, Direction.SOUTH, items[(row * size + col) % items.length], false, (row + col) % 4));
+                }
+            }
+        });
+        world.getServer().runCommand(String.format(Locale.ROOT, "tp @a %.1f %d %.1f 180 -15", baseX + 0.5, baseY + 2, itemZ + 18.5));
+        context.waitTicks(60);
+        waitForChunks(world);
+        gpuRounds(context, "400 item frames with items  ");
+        context.runOnClient(client -> BakedFrames.setGpu(true));
+        world.getServer().runOnServer(server -> frames.forEach(ItemFrame::discard));
+    }
+
+    private void gpuRounds(ClientGameTestContext context, String scene) {
+        int rounds = Integer.parseInt(System.getenv().getOrDefault("FIF_ROUNDS", "3"));
+        for (int round = 0; round < rounds; round++) {
+            for (int step = 0; step < 2; step++) {
+                boolean gpu = (round + step) % 2 == 0;
+                context.runOnClient(client -> BakedFrames.setGpu(gpu));
+                results.add(measure(context, scene + " | " + (gpu ? "GPU" : "CPU")));
+            }
+        }
+    }
+
     private static void waitForChunks(TestSingleplayerContext world) {
         //#if MC >= 26.2
         world.getConnection().waitForChunksRender(1200);
@@ -900,7 +985,8 @@ public class FifGameTest implements FabricClientGameTest {
         double avg = total / (double) samples;
         String line = String.format(Locale.ROOT, "%-46s %7.1f FPS (%6.2f ms/frame)", name, avg, 1000.0 / avg);
         if (BakedFrames.supported()) {
-            line += " baked frames: " + context.computeOnClient(client -> BakedFrames.INSTANCE.bakedCount());
+            line += " baked frames: " + context.computeOnClient(client -> BakedFrames.INSTANCE.bakedCount()) + ", GPU draws: "
+                    + context.computeOnClient(client -> BakedFrames.INSTANCE.gpuDraws());
         }
         LOGGER.info("[FIF] {}", line);
         return line;

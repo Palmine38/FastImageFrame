@@ -11,6 +11,7 @@
     "sources": "https://github.com/Palmine38/FastImageFrame"
   },
   "license": "LGPL-3.0-only",
+  "icon": "assets/fastimageframes/icon.png",
   "environment": "client",
   "entrypoints": {
     "client": [
@@ -23,6 +24,7 @@
   "mixins": [
     "fastimageframes.mixins.json"
   ],
+  "accessWidener": "fastimageframes.accesswidener",
   "depends": {
     "fabricloader": ">=0.15.11",
     "fabric-api": "*",
