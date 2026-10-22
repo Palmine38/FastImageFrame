@@ -2,6 +2,7 @@ package fastimageframes.gametest;
 
 import fastimageframes.FifConfig;
 import fastimageframes.atlas.MapAtlas;
+import fastimageframes.bake.BakeableFrame;
 import fastimageframes.bake.BakedFrames;
 import fastimageframes.config.ConfigValues;
 import fastimageframes.config.FifConfigScreen;
@@ -32,6 +33,7 @@ import net.minecraft.network.chat.contents.TranslatableContents;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.packs.PackType;
 import net.minecraft.server.packs.repository.PackRepository;
+import net.minecraft.world.entity.decoration.GlowItemFrame;
 import net.minecraft.world.entity.decoration.ItemFrame;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -39,6 +41,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
+import net.minecraft.world.phys.AABB;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -120,6 +123,18 @@ public class FifGameTest implements FabricClientGameTest {
                 context.waitTicks(200);
                 waitForChunks(world);
                 animatedWallBenchmark(context, world);
+                logResults();
+                context.waitTicks(100);
+            }
+            return;
+        }
+        if (System.getenv("FIF_OCCLUSION_ONLY") != null) {
+            try (TestSingleplayerContext world = context.worldBuilder().create()) {
+                prepareWorld(world);
+                context.waitTicks(200);
+                waitForChunks(world);
+                lightChecks(context, world);
+                occlusionChecks(context, world);
                 logResults();
                 context.waitTicks(100);
             }
@@ -225,7 +240,9 @@ public class FifGameTest implements FabricClientGameTest {
         animatedWallBenchmark(context, world);
         if (itemFramesBaked()) {
             itemWallBenchmark(context, world);
+            lightChecks(context, world);
         }
+        occlusionChecks(context, world);
         if (FakeImageFrameServer.available() && IfcLink.isLinked()) {
             hdWallBenchmark(context, world);
         }
@@ -912,6 +929,184 @@ public class FifGameTest implements FabricClientGameTest {
                 results.add(measure(context, scene + " | " + (gpu ? "GPU" : "CPU")));
             }
         }
+    }
+
+    private void lightChecks(ClientGameTestContext context, TestSingleplayerContext world) {
+        int wallZ = baseZ - 70;
+        int size = 10;
+        BlockPos lamp = new BlockPos(baseX, baseY - 1, wallZ + 1);
+        AABB area = new AABB(baseX - size, baseY - 2, wallZ - 2, baseX + size, baseY + size + 2, wallZ + 2);
+        List<ItemFrame> frames = new ArrayList<>();
+        world.getServer().runOnServer(server -> {
+            ServerLevel level = server.overworld();
+            List<ItemStack> items = new ArrayList<>();
+            for (ItemStack item : itemSamples()) {
+                if (!item.is(Items.COMPASS) && !item.is(Items.CLOCK)) {
+                    items.add(item);
+                }
+            }
+            Random random = new Random(11);
+            level.setBlockAndUpdate(lamp, Blocks.STONE.defaultBlockState());
+            for (int row = 0; row < size; row++) {
+                for (int col = 0; col < size; col++) {
+                    BlockPos pos = new BlockPos(baseX - size / 2 + col, baseY + row, wallZ);
+                    level.setBlockAndUpdate(pos.north(), Blocks.STONE.defaultBlockState());
+                    boolean glow = col % 2 == 1;
+                    ItemStack stack = row % 2 == 0 ? mapItem(randomMap(level, random, false)) : items.get((row * size + col) % items.size());
+                    frames.add(spawnItemFrame(level, pos, Direction.SOUTH, stack, glow, row % 2 == 0 ? 0 : col % 4));
+                }
+            }
+        });
+        world.getServer().runCommand(String.format(Locale.ROOT, "tp @a %.1f %d %.1f 180 10", baseX + 0.5, baseY + 6, wallZ + 12.5));
+        context.waitTicks(80);
+        waitForChunks(world);
+        context.waitTicks(60);
+        int expected = itemFramesBaked() ? size * size : size * size / 2;
+        int[] counts = bakedIn(context, area);
+        check(counts[0] == expected / 2 && counts[1] == expected / 2,
+                "normal and glow item frames both baked: " + counts[0] + " normal, " + counts[1] + " glow of " + expected);
+        int bakes = context.computeOnClient(client -> BakedFrames.INSTANCE.sectionBakes());
+        int relit = context.computeOnClient(client -> BakedFrames.INSTANCE.relitCount());
+        for (int i = 0; i < 7; i++) {
+            setBlock(world, lamp, i % 2 == 0 ? Blocks.GLOWSTONE : Blocks.STONE);
+            context.waitTicks(10);
+        }
+        context.waitTicks(10);
+        int bakesAfter = context.computeOnClient(client -> BakedFrames.INSTANCE.sectionBakes());
+        int relitAfter = context.computeOnClient(client -> BakedFrames.INSTANCE.relitCount());
+        counts = bakedIn(context, area);
+        check(counts[0] + counts[1] == expected && relitAfter > relit && bakesAfter == bakes, "7 light changes applied to the baked frames: "
+                + (relitAfter - relit) + " frames relit, " + (bakesAfter - bakes) + " sections baked again, " + (counts[0] + counts[1]) + " still baked");
+        lightCompare(context, "light-on-after-bake");
+
+        context.waitTicks(60);
+        setBlock(world, lamp, Blocks.STONE);
+        context.waitTicks(20);
+        lightCompare(context, "light-off-after-bake");
+
+        world.getServer().runOnServer(server -> {
+            frames.forEach(ItemFrame::discard);
+            server.overworld().setBlockAndUpdate(lamp, Blocks.STONE.defaultBlockState());
+        });
+        context.waitTicks(20);
+    }
+
+    private void lightCompare(ClientGameTestContext context, String name) {
+        Path fast = context.takeScreenshot(name + "-fast");
+        setFif(context, false);
+        context.waitTicks(20);
+        Path vanilla = context.takeScreenshot(name + "-vanilla");
+        setFif(context, true);
+        double diff = differingPercent(vanilla, fast);
+        check(diff < MAX_VISUAL_DIFF, String.format(Locale.ROOT, "%s: %.3f%% pixels differ from vanilla", name, diff));
+    }
+
+    private static int[] bakedIn(ClientGameTestContext context, AABB area) {
+        return context.computeOnClient(client -> {
+            int[] counts = new int[2];
+            for (ItemFrame frame : client.level.getEntitiesOfClass(ItemFrame.class, area)) {
+                if (((BakeableFrame) frame).fif$isBaked()) {
+                    counts[frame instanceof GlowItemFrame ? 1 : 0]++;
+                }
+            }
+            return counts;
+        });
+    }
+
+    private static void setBlock(TestSingleplayerContext world, BlockPos pos, net.minecraft.world.level.block.Block block) {
+        world.getServer().runOnServer(server -> server.overworld().setBlockAndUpdate(pos, block.defaultBlockState()));
+    }
+
+    private void occlusionChecks(ClientGameTestContext context, TestSingleplayerContext world) {
+        int wallZ = baseZ - 4;
+        int coverZ = wallZ + 8;
+        world.getServer().runOnServer(server -> {
+            ServerLevel level = server.overworld();
+            wallFrames.forEach(ItemFrame::discard);
+            wallFrames.clear();
+            int half = WALL / 2;
+            Random random = new Random(1);
+            for (int row = 0; row < WALL; row++) {
+                for (int col = 0; col < WALL; col++) {
+                    level.setBlockAndUpdate(new BlockPos(baseX - half + col, baseY + row, wallZ - 1), Blocks.STONE.defaultBlockState());
+                    wallFrames.add(spawnFrame(level, new BlockPos(baseX - half + col, baseY + row, wallZ), Direction.SOUTH, randomMap(level, random, false, true), false));
+                }
+            }
+            for (int x = -45; x <= 45; x++) {
+                for (int y = -1; y <= 55; y++) {
+                    level.setBlockAndUpdate(new BlockPos(baseX + x, baseY + y, coverZ), Blocks.STONE.defaultBlockState());
+                }
+            }
+        });
+        world.getServer().runCommand(String.format(Locale.ROOT, "tp @a %.1f %d %.1f 180 -25", baseX + 0.5, baseY, wallZ + VIEW_DISTANCE));
+        context.waitTicks(100);
+        waitForChunks(world);
+        occlusionRounds(context, "1600 maps behind a wall, baked    ");
+        setOcclusion(context, true);
+        context.waitTicks(20);
+        List<Integer> windows = new ArrayList<>();
+        for (int i = 0; i < 5 && (windows.isEmpty() || windows.get(windows.size() - 1) != 0); i++) {
+            int before = context.computeOnClient(client -> BakedFrames.INSTANCE.gpuDraws());
+            context.waitTicks(40);
+            windows.add(context.computeOnClient(client -> BakedFrames.INSTANCE.gpuDraws()) - before);
+        }
+        check(windows.get(windows.size() - 1) == 0, "baked wall hidden behind blocks is not drawn: GPU draws per 2 s " + windows);
+        setBake(context, false);
+        occlusionRounds(context, "1600 maps behind a wall, not baked");
+        setBake(context, true);
+
+        world.getServer().runOnServer(server -> {
+            ServerLevel level = server.overworld();
+            for (int window = 0; window < 4; window++) {
+                for (int x = 0; x < 5; x++) {
+                    for (int y = 0; y < 4; y++) {
+                        level.setBlockAndUpdate(new BlockPos(baseX - 14 + window * 8 + x, baseY + 6 + window * 3 + y, coverZ), Blocks.AIR.defaultBlockState());
+                    }
+                }
+            }
+        });
+        context.waitTicks(60);
+        for (int bake = 1; bake >= 0; bake--) {
+            setBake(context, bake == 1);
+            setOcclusion(context, false);
+            context.waitTicks(40);
+            Path off = context.takeScreenshot("occlusion-windows-off-" + bake);
+            setOcclusion(context, true);
+            context.waitTicks(40);
+            Path on = context.takeScreenshot("occlusion-windows-on-" + bake);
+            double diff = differingPercent(off, on);
+            check(diff < 0.05, String.format(Locale.ROOT, "wall with windows, %s: %.3f%% pixels differ with occlusion", bake == 1 ? "baked" : "not baked", diff));
+        }
+        setBake(context, true);
+        results.add(measure(context, "1600 maps behind windows | occlusion on"));
+
+        world.getServer().runOnServer(server -> {
+            ServerLevel level = server.overworld();
+            wallFrames.forEach(ItemFrame::discard);
+            wallFrames.clear();
+            for (int x = -45; x <= 45; x++) {
+                for (int y = -1; y <= 55; y++) {
+                    level.setBlockAndUpdate(new BlockPos(baseX + x, baseY + y, coverZ), Blocks.AIR.defaultBlockState());
+                }
+            }
+        });
+        context.waitTicks(40);
+    }
+
+    private void occlusionRounds(ClientGameTestContext context, String scene) {
+        int rounds = Integer.parseInt(System.getenv().getOrDefault("FIF_ROUNDS", "3"));
+        for (int round = 0; round < rounds; round++) {
+            for (int step = 0; step < 2; step++) {
+                boolean on = (round + step) % 2 == 0;
+                setOcclusion(context, on);
+                results.add(measure(context, scene + " | occlusion " + (on ? "on " : "off")));
+            }
+        }
+    }
+
+    private static void setOcclusion(ClientGameTestContext context, boolean enabled) {
+        context.runOnClient(client -> FifConfig.occlusionCulling = enabled);
+        context.waitTicks(5);
     }
 
     private static void waitForChunks(TestSingleplayerContext world) {

@@ -32,7 +32,7 @@ public class FifConfigScreen extends Screen {
     private static final int[] DISTANCES = range(2, 64);
     private static final int[] DOWNGRADE_SECONDS = range(0, 30);
 
-    private static final String[] RENDER_OPTIONS = {"mapAtlas", "atlasSize", "batchFrames", "optimizedFrameModel", "skipRedundantMapUpdates", "bakeFrames", "bakeItemFrames"};
+    private static final String[] RENDER_OPTIONS = {"mapAtlas", "atlasSize", "batchFrames", "optimizedFrameModel", "skipRedundantMapUpdates", "bakeFrames", "bakeItemFrames", "occlusionCulling"};
     private static final String[] LOD_OPTIONS = {"hdLod", "hdLodQuality", "hdLodCustomDistance", "hdLodCustomDowngradeSeconds", "hdLodMinResolution",
             "hdTextureMemoryMB", "hdUnloadUnusedAfterSeconds"};
     private static final String[] CACHE_OPTIONS = {"hdRamCacheMB", "hdDiskCache", "hdDiskCacheMaxMB", "hdTrustValidatedDiskCache", "hdMaxConcurrentRequests"};
@@ -147,6 +147,7 @@ public class FifConfigScreen extends Screen {
         rows.addChild(toggle("skipRedundantMapUpdates", WIDTH));
         rows.addChild(activeIf(toggle("bakeFrames", WIDTH), values.bool("mapAtlas")));
         rows.addChild(activeIf(toggle("bakeItemFrames", WIDTH), values.bool("mapAtlas") && values.bool("bakeFrames")));
+        rows.addChild(toggle("occlusionCulling", WIDTH));
     }
 
     private void lod(GridLayout.RowHelper rows) {

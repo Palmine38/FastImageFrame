@@ -2,6 +2,7 @@ package fastimageframes.mixin;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import fastimageframes.bake.BakedFrames;
+import fastimageframes.render.Occlusion;
 import net.minecraft.client.renderer.LevelRenderer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -25,6 +26,22 @@ import net.minecraft.client.renderer.state.LevelRenderState;
 
 @Mixin(LevelRenderer.class)
 public class LevelRendererBakeMixin {
+
+    //#if MC < 26.2
+    //#if MC >= 26.1
+    @Inject(method = "extractLevel", at = @At("HEAD"))
+    //#else
+    @Inject(method = "renderLevel", at = @At("HEAD"))
+    //#endif
+    private void fif$beginOcclusion(CallbackInfo ci) {
+        Occlusion.beginFrame();
+    }
+
+    @Inject(method = "setSectionDirty(IIIZ)V", at = @At("HEAD"))
+    private void fif$sectionDirty(int x, int y, int z, boolean important, CallbackInfo ci) {
+        Occlusion.blocksChanged(x, y, z);
+    }
+    //#endif
 
     //#if MC >= 1.21.9
     @Inject(method = "submitEntities", at = @At("TAIL"))

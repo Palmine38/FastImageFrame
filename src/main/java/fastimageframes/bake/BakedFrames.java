@@ -10,9 +10,11 @@ import fastimageframes.hd.HdLod;
 import fastimageframes.hd.HdMaps;
 import fastimageframes.render.Cameras;
 import fastimageframes.render.IrisCompat;
+import fastimageframes.render.Occlusion;
 import fastimageframes.render.Shaders;
 import fastimageframes.render.SectionCulling;
 import fastimageframes.render.FifLayers;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Reference2IntArrayMap;
@@ -84,6 +86,8 @@ public final class BakedFrames {
     private static final int BAKE_BUDGET_PER_TICK = 1024;
     private static final Direction[] DIRECTIONS = Direction.values();
     private static final MethodHandle HEAD_ATLAS_GENERATION = headAtlasGenerationHandle();
+    private static final int GLOW_ITEM_LIGHT = 0xF000F0;
+    private static final int GLOW_MAP_LIGHT = 0xF000D2;
 
     private static final class Section {
         final long key;
@@ -99,6 +103,9 @@ public final class BakedFrames {
         int shadowFrame = -1;
         Entity shadowTrigger;
         final Map<ItemFrame, MapQuad> quads = new Reference2ObjectOpenHashMap<>();
+        final Map<ItemFrame, Span> spans = new Reference2ObjectOpenHashMap<>();
+        int occlusionGeneration = -1;
+        boolean occluded;
         boolean dirty = true;
         boolean hasData;
         int version;
@@ -114,6 +121,20 @@ public final class BakedFrames {
     }
 
     record Layer(RenderType type, int entity, int blockEntity, int item) {
+    }
+
+    private static final class Span {
+        final VertexRecorder[] recorders;
+        final int[] ranges;
+        final boolean patchable;
+        int light;
+
+        Span(VertexRecorder[] recorders, int[] ranges, boolean patchable, int light) {
+            this.recorders = recorders;
+            this.ranges = ranges;
+            this.patchable = patchable;
+            this.light = light;
+        }
     }
 
     private static final class MapQuad {
@@ -156,6 +177,16 @@ public final class BakedFrames {
             }
             live.setUvs(placed.getInt(live), high, slot.u0, slot.v0, slot.u1, slot.v1);
         }
+
+        void relight(int from, int to) {
+            for (int v = 7; v < vertices.length; v += VertexRecorder.STRIDE) {
+                if (Float.floatToRawIntBits(vertices[v]) == from) {
+                    vertices[v] = Float.intBitsToFloat(to);
+                }
+            }
+            int first = placed.getInt(live);
+            live.relight(first * VertexRecorder.STRIDE, (first + 4) * VertexRecorder.STRIDE, from, to);
+        }
     }
 
     private final Long2ObjectOpenHashMap<Section> sections = new Long2ObjectOpenHashMap<>();
@@ -193,6 +224,8 @@ public final class BakedFrames {
     private boolean shaders;
     private Object idMaps;
     private int recordingEntity;
+    private int relit;
+    private int bakes;
 
     private BakedFrames() {
         mapFrames.defaultReturnValue((byte) -1);
@@ -243,8 +276,8 @@ public final class BakedFrames {
         if (!shadow) {
             bakedFrames.frustum = frustum;
         }
-        if (!(entity instanceof BakeableFrame frame) || !frame.fif$isBaked() || !bakedFrames.active) {
-            return 0;
+        if (!(entity instanceof BakeableFrame frame) || !frame.fif$isBaked() || !bakedFrames.active || bakedFrames.shaders != Shaders.active()) {
+            return entity instanceof ItemFrame itemFrame && hidden(itemFrame) ? 1 : 0;
         }
         if (!shadow) {
             return 1;
@@ -259,6 +292,11 @@ public final class BakedFrames {
         }
         section.shadowTrigger = entity;
         return 2;
+    }
+
+    private static boolean hidden(ItemFrame frame) {
+        return Occlusion.active() && !Shaders.shadowPass() && !Minecraft.getInstance().shouldEntityAppearGlowing(frame)
+                && Occlusion.blockHidden(frame.blockPosition(), 0.0);
     }
 
     public void onFrameStart() {
@@ -506,6 +544,9 @@ public final class BakedFrames {
                     bakeable.fif$setSignature(signature);
                     markDirty(section);
                 }
+                if (bakeable.fif$isBaked() && !section.dirty) {
+                    relight(minecraft, section, frame);
+                }
             }
         }
         if (tick % REPORT_EVERY_TICKS == 0 && !sections.isEmpty()) {
@@ -524,6 +565,9 @@ public final class BakedFrames {
             if (section.dirty) {
                 rebuild.add(section);
             }
+        }
+        if (minecraft.getEntityRenderDispatcher().camera == null) {
+            return;
         }
         int budget = BAKE_BUDGET_PER_TICK;
         for (Section section : rebuild) {
@@ -605,7 +649,6 @@ public final class BakedFrames {
         int geometry = frame.getRotation();
         geometry = geometry * 31 + facing;
         geometry = geometry * 31 + (frame.isInvisible() ? 1 : 0);
-        geometry = geometry * 31 + minecraft.getEntityRenderDispatcher().getPackedLightCoords(frame, 1.0F);
         geometry = geometry * 31 + (MapAtlas.INSTANCE.isTransparent(mapId.id()) ? 1 : 0);
         geometry = geometry * 31 + frame.getType().hashCode();
         geometry = geometry * 31 + markers;
@@ -667,7 +710,6 @@ public final class BakedFrames {
         key = key * 31 + frame.getRotation();
         key = key * 31 + frame.getDirection().ordinal();
         key = key * 31 + (frame.isInvisible() ? 1 : 0);
-        key = key * 31 + minecraft.getEntityRenderDispatcher().getPackedLightCoords(frame, 1.0F);
         return key;
     }
 
@@ -701,7 +743,9 @@ public final class BakedFrames {
         for (VertexRecorder probe : probes.values()) {
             float[] a = probe.data.elements();
             for (int i = 0, size = probe.data.size(); i < size; i++) {
-                hash = hash * 31 + Float.floatToRawIntBits(a[i]);
+                if (i % VertexRecorder.STRIDE != 7) {
+                    hash = hash * 31 + Float.floatToRawIntBits(a[i]);
+                }
             }
         }
         hash = hash * 31 + frame.getType().hashCode();
@@ -749,6 +793,7 @@ public final class BakedFrames {
     }
 
     private void bake(Minecraft minecraft, Section section, Vec3 camera) {
+        bakes++;
         section.dirty = false;
         section.version++;
         for (VertexRecorder layer : section.layers.values()) {
@@ -756,6 +801,8 @@ public final class BakedFrames {
         }
         clearBacks(section);
         section.quads.clear();
+        section.spans.clear();
+        section.occlusionGeneration = -1;
         EntityRenderDispatcher dispatcher = minecraft.getEntityRenderDispatcher();
         PoseStack poseStack = new PoseStack();
         baked = section;
@@ -775,6 +822,7 @@ public final class BakedFrames {
                 int facing = backIndex(frame);
                 int backSize = section.backs[facing] == null ? 0 : section.backs[facing].data.size();
                 double backPlane = section.backPlanes[facing];
+                int light = dispatcher.getPackedLightCoords(frame, 1.0F);
                 rejected = false;
                 recording = frame;
                 MapId framedMap = frame.getFramedMapId(frame.getItem());
@@ -810,6 +858,7 @@ public final class BakedFrames {
                     if (quad != null) {
                         section.quads.put(frame, quad);
                     }
+                    section.spans.put(frame, span(section, frame, types, sizes, facing, backSize, light));
                 }
                 bakeable.fif$setBaked(!rejected);
             }
@@ -824,6 +873,7 @@ public final class BakedFrames {
             }
             clearBacks(section);
             section.quads.clear();
+            section.spans.clear();
         } finally {
             baking = false;
             baked = null;
@@ -856,6 +906,106 @@ public final class BakedFrames {
             first = before / VertexRecorder.STRIDE;
         }
         return grown == null ? null : new MapQuad(key, grown, first);
+    }
+
+    private static Span span(Section section, ItemFrame frame, Layer[] types, int[] sizes, int facing, int backSize, int light) {
+        boolean glow = frame instanceof GlowItemFrame;
+        List<VertexRecorder> recorders = new ArrayList<>(4);
+        IntArrayList ranges = new IntArrayList();
+        for (Map.Entry<Layer, VertexRecorder> layer : section.layers.entrySet()) {
+            int index = indexOf(types, layer.getKey());
+            addRange(recorders, ranges, layer.getValue(), index < 0 ? 0 : sizes[index]);
+        }
+        addRange(recorders, ranges, section.backs[facing], backSize);
+        boolean patchable = !glow || !glowLight(light);
+        for (int i = 0; i < recorders.size() && patchable; i++) {
+            float[] a = recorders.get(i).data.elements();
+            for (int v = ranges.getInt(i * 2) + 7; v < ranges.getInt(i * 2 + 1); v += VertexRecorder.STRIDE) {
+                int value = Float.floatToRawIntBits(a[v]);
+                if (value != light && !(glow && glowLight(value))) {
+                    patchable = false;
+                    break;
+                }
+            }
+        }
+        return new Span(recorders.toArray(new VertexRecorder[0]), ranges.toIntArray(), patchable, light);
+    }
+
+    private static void addRange(List<VertexRecorder> recorders, IntArrayList ranges, VertexRecorder recorder, int start) {
+        if (recorder != null && recorder.data.size() > start) {
+            recorders.add(recorder);
+            ranges.add(start);
+            ranges.add(recorder.data.size());
+        }
+    }
+
+    private static boolean glowLight(int light) {
+        return light == GLOW_ITEM_LIGHT || light == GLOW_MAP_LIGHT;
+    }
+
+    private void relight(Minecraft minecraft, Section section, ItemFrame frame) {
+        Span span = section.spans.get(frame);
+        if (span == null) {
+            return;
+        }
+        int light = minecraft.getEntityRenderDispatcher().getPackedLightCoords(frame, 1.0F);
+        if (light == span.light) {
+            return;
+        }
+        if (!span.patchable || frame instanceof GlowItemFrame && glowLight(light)) {
+            markDirty(section);
+            return;
+        }
+        for (int i = 0; i < span.recorders.length; i++) {
+            span.recorders[i].relight(span.ranges[i * 2], span.ranges[i * 2 + 1], span.light, light);
+        }
+        MapQuad quad = section.quads.get(frame);
+        if (quad != null) {
+            quad.relight(span.light, light);
+        }
+        span.light = light;
+        section.version++;
+        relit++;
+    }
+
+    public int relitCount() {
+        return relit;
+    }
+
+    public int frameCount() {
+        return frame;
+    }
+
+    public int sectionBakes() {
+        return bakes;
+    }
+
+    private boolean occluded(Section section) {
+        if (!Occlusion.active() || Shaders.shadowPass()) {
+            return false;
+        }
+        int generation = Occlusion.generation();
+        if (section.occlusionGeneration == generation) {
+            return section.occluded;
+        }
+        boolean hidden = true;
+        boolean settled = true;
+        for (ItemFrame frame : section.frames) {
+            if (!((BakeableFrame) frame).fif$isBaked()) {
+                continue;
+            }
+            boolean frameHidden = Occlusion.blockHidden(frame.blockPosition(), 0.0);
+            settled &= Occlusion.settled();
+            if (!frameHidden) {
+                hidden = false;
+                break;
+            }
+        }
+        if (settled) {
+            section.occlusionGeneration = generation;
+            section.occluded = hidden;
+        }
+        return hidden;
     }
 
     private static VertexRecorder recorder(Layer layer) {
@@ -1028,7 +1178,7 @@ public final class BakedFrames {
         Vec3 placed = camera.subtract(base.m30(), base.m31(), base.m32());
         for (Section section : sections.values()) {
             if (!section.hasData || section.dirty || frustum != null && !frustum.isVisible(section.bounds)
-                    || !SectionCulling.isVisible(section.key, section.originX, section.originY, section.originZ)) {
+                    || !SectionCulling.isVisible(section.key, section.originX, section.originY, section.originZ) || occluded(section)) {
                 continue;
             }
             float ox = (float) (section.originX - camera.x);
@@ -1144,7 +1294,7 @@ public final class BakedFrames {
         boolean gpu = !shaders && SectionMesh.usable();
         for (Section section : sections.values()) {
             if (!section.hasData || section.dirty || frustum != null && !frustum.isVisible(section.bounds)
-                    || !SectionCulling.isVisible(section.key, section.originX, section.originY, section.originZ)) {
+                    || !SectionCulling.isVisible(section.key, section.originX, section.originY, section.originZ) || occluded(section)) {
                 continue;
             }
             float ox = (float) (section.originX - camera.x);
@@ -1236,7 +1386,7 @@ public final class BakedFrames {
     }
 
     private boolean replayable() {
-        if (!active || sections.isEmpty()) {
+        if (!active || sections.isEmpty() || shaders != Shaders.active()) {
             return false;
         }
         if (MapAtlas.INSTANCE.getGeneration() != atlasGeneration) {
@@ -1278,6 +1428,7 @@ public final class BakedFrames {
             section.layers.clear();
             clearBacks(section);
             section.quads.clear();
+            section.spans.clear();
             section.version++;
             closeMesh(section);
         }

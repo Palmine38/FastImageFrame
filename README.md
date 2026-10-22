@@ -47,8 +47,10 @@ or Done; Cancel leaves the settings as they were.
   one (visibility, light, map lookup, rotations, model). Map frames that do not change are handled like terrain: the
   frames of a chunk section are drawn once by the normal code into recorders (so every mod hook still applies), then
   the recorded vertices are replayed as a whole and the entities are skipped. Each frame is checked 5 times per
-  second (map, rotation, light, invisibility, HD texture) and its section is rebuilt when it changed. A baked
-  section is written to the game buffers as one block copy where only the positions move with the camera.
+  second (map, rotation, light, invisibility, HD texture) and its section is rebuilt when it changed. A change of
+  light alone (a torch placed nearby, a dynamic lights mod) is written into the recorded vertices of that frame
+  instead, for item frames and glow item frames alike. A baked section is written to the game buffers as one block
+  copy where only the positions move with the camera.
   - Without a shader pack, a baked section is uploaded once to video memory and drawn from there (one draw per
     render type and section), so nothing is copied on the CPU while it does not change. From 1.21.6 the vertices
     stay relative to the section and the game's vertex shader is derived at runtime so that fog is computed from the
@@ -60,7 +62,7 @@ or Done; Cancel leaves the settings as they were.
     behind the wall.
   - Sections hidden behind blocks are skipped, with the same visibility the game uses for terrain (Sodium's when it
     is there).
-  - Frames that glow, show their name, have a named marker or an HD texture of their own are drawn the normal way.
+  - Frames with the Glowing effect outline, frames that show their name, have a named marker or an HD texture of their own are drawn the normal way.
     Up to 1.21.8, baking is off while hitboxes (F3+B) are shown.
 - **Animated images (GIFs of the ImageFrame plugin)**: the plugin turns every image of a GIF into a map of its own and
   swaps the map held by each frame on every image. Every image goes to the atlas once, and in a baked wall only the
@@ -71,8 +73,14 @@ or Done; Cancel leaves the settings as they were.
   chests, skulls...). The item is drawn again into a fingerprint to catch items whose look changes without a server
   update (compasses, clocks). This happens 5 times per second only during the first 10 seconds of an item and for
   items already seen changing on their own; other frames are fingerprinted about every 2 seconds and in between
-  only compare a cheap key (item, components, rotation, facing, invisibility, light). From 26.1, where item
+  only compare a cheap key (item, components, rotation, facing, invisibility). From 26.1, where item
   rendering was rewritten, these frames are drawn the normal way.
+- **Hidden frames culling**: on top of the section visibility of the game, each frame is tested against the blocks
+  between the camera and its block, with the same test as Voltum: the space between the two is cut into slices of
+  one block along each axis, and the frame is hidden when one slice is fully covered by opaque full blocks. Baked
+  sections are skipped when all their frames are hidden, frames drawn the normal way are skipped one by one. Results
+  are kept until the camera enters another block or blocks change near it. Off in the shadow pass of shader packs
+  and for frames with the Glowing effect (their outline shows through walls).
 - **Cheaper per map work**: no item model resolved for frames that show a map, no render type lookup for maps drawn
   from the atlas, no walk over empty map decorations, no map instance lookup with a new lambda.
 - **No redundant map texture rebuilds**: vanilla rebuilds and uploads the whole texture of a map for every map

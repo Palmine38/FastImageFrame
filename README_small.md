@@ -20,7 +20,10 @@ vanilla screenshots.
   shields, compasses, clocks...) are baked too.
 - **Lighter frame model**: the edges between two frames and the back of the frames are not drawn when they can't be
   seen. Resource packs that change the frame (invisible frames...) are respected.
-- **Hidden walls are skipped**: walls behind blocks are not drawn, using the game's (or Sodium's) visibility.
+- **Hidden frames are skipped**: frames behind blocks are not drawn, baked or not, using the game's (or Sodium's)
+  visibility plus a block by block test.
+- **Glow item frames too**: normal and glow item frames are optimized the same way, and a change of light (torches,
+  dynamic lights) does not rebuild anything.
 - **No useless map updates**: the game no longer rebuilds a whole map texture when a packet only moves markers.
 
 ### ImageFrame Client HD images

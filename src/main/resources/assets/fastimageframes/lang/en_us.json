@@ -46,7 +46,7 @@
   "fastimageframes.midnightconfig.hdMaxConcurrentRequests": "Max Simultaneous HD Downloads",
   "fastimageframes.midnightconfig.hdMaxConcurrentRequests.tooltip": "HD images are requested in the order the maps appear, at most this many at the same time.",
   "fastimageframes.midnightconfig.bakeFrames": "Baked Map Walls",
-  "fastimageframes.midnightconfig.bakeFrames.tooltip": "Map frames that do not change are drawn like terrain: prepared once, then redrawn as a whole instead of one entity at a time. Frames are checked again 5 times per second. Off with shader packs and hitboxes (F3+B).",
+  "fastimageframes.midnightconfig.bakeFrames.tooltip": "Map frames that do not change are drawn like terrain: prepared once, then redrawn as a whole instead of one entity at a time. Frames are checked again 5 times per second. Off with hitboxes (F3+B).",
   "fastimageframes.config.title": "Fast ImageFrames",
   "fastimageframes.config.value": "%s: %s",
   "fastimageframes.config.yes": "Yes",
@@ -86,7 +86,7 @@
   "fastimageframes.config.skipRedundantMapUpdates": "Skip Useless Map Updates",
   "fastimageframes.config.skipRedundantMapUpdates.tooltip": "The game rebuilds and uploads the texture of a map every time the server sends the map, even when only a marker moved. With this, the texture is only rebuilt when the colors really changed.",
   "fastimageframes.config.bakeFrames": "Baked Map Walls",
-  "fastimageframes.config.bakeFrames.tooltip": "Map frames that don't change are prepared once, like terrain, then drawn as a whole instead of one entity at a time: the biggest gain on big walls. Each frame is checked 5 times per second and prepared again when it changed. Animated images (GIFs), glowing and named frames are drawn the normal way. Off with shader packs and hitboxes (F3+B). Needs the map atlas.",
+  "fastimageframes.config.bakeFrames.tooltip": "Map frames that don't change are prepared once, like terrain, then drawn as a whole instead of one entity at a time: the biggest gain on big walls. Item frames and glow item frames are both baked. Each frame is checked 5 times per second and prepared again when it changed; a change of light (torch, dynamic lights) is applied without preparing it again. Animated images (GIFs), frames with the Glowing effect outline and named frames you look at are drawn the normal way. Off with hitboxes (F3+B). Needs the map atlas.",
   "fastimageframes.config.hdLod": "HD Images LOD",
   "fastimageframes.config.hdLod.tooltip": "Draws the HD images of ImageFrame Client at the resolution their size on screen needs: far maps go into the atlas at 128x128, close ones keep their detail (256, 512... up to the size of the image). Saves a lot of video memory and FPS. Off: ImageFrame Client draws every image at full resolution.",
   "fastimageframes.config.hdLodQuality": "Preset",
@@ -129,5 +129,8 @@
   "fastimageframes.midnightconfig.hdLodCustomDowngradeSeconds": "Lower Quality After",
   "fastimageframes.config.bakeItemFrames": "Baked Item Frames",
   "fastimageframes.config.bakeItemFrames.tooltip": "Item frames holding other items than maps (and empty frames) are baked like map walls: recorded once with their item and replayed as a whole. Items whose look changes over time (compasses, clocks...) are noticed and drawn the normal way. Needs Baked Map Walls. Minecraft 1.21.4 to 1.21.11. No visual change.",
-  "fastimageframes.midnightconfig.bakeItemFrames": "Baked Item Frames"
+  "fastimageframes.midnightconfig.bakeItemFrames": "Baked Item Frames",
+  "fastimageframes.config.occlusionCulling": "Hidden Frames Culling",
+  "fastimageframes.config.occlusionCulling.tooltip": "Frames hidden behind solid blocks (walls, floors, hills) are not drawn at all, baked or not. Only opaque full blocks between you and the frame hide it, so nothing visible ever disappears. Off in the shadow pass of shader packs and for frames with the Glowing effect.",
+  "fastimageframes.midnightconfig.occlusionCulling": "Hidden Frames Culling"
 }

@@ -46,7 +46,7 @@
   "fastimageframes.midnightconfig.hdMaxConcurrentRequests": "Téléchargements HD simultanés max",
   "fastimageframes.midnightconfig.hdMaxConcurrentRequests.tooltip": "Les images HD sont demandées dans l'ordre d'apparition des maps, au plus ce nombre à la fois.",
   "fastimageframes.midnightconfig.bakeFrames": "Murs de maps figés",
-  "fastimageframes.midnightconfig.bakeFrames.tooltip": "Les cadres de maps qui ne changent pas sont dessinés comme le terrain : préparés une fois, puis redessinés d'un bloc au lieu d'une entité à la fois. Les cadres sont revérifiés 5 fois par seconde. Désactivé avec un pack de shaders et l'affichage des boîtes de collision (F3+B).",
+  "fastimageframes.midnightconfig.bakeFrames.tooltip": "Les cadres de maps qui ne changent pas sont dessinés comme le terrain : préparés une fois, puis redessinés d'un bloc au lieu d'une entité à la fois. Les cadres sont revérifiés 5 fois par seconde. Désactivé avec l'affichage des boîtes de collision (F3+B).",
   "fastimageframes.config.title": "Fast ImageFrames",
   "fastimageframes.config.value": "%s : %s",
   "fastimageframes.config.yes": "Oui",
@@ -86,7 +86,7 @@
   "fastimageframes.config.skipRedundantMapUpdates": "Ignorer les mises à jour de map inutiles",
   "fastimageframes.config.skipRedundantMapUpdates.tooltip": "Le jeu reconstruit et renvoie la texture d'une map à chaque fois que le serveur envoie la map, même quand seul un marqueur a bougé. Avec ce réglage, la texture n'est reconstruite que si les couleurs ont vraiment changé.",
   "fastimageframes.config.bakeFrames": "Murs de maps figés",
-  "fastimageframes.config.bakeFrames.tooltip": "Les cadres de maps qui ne changent pas sont préparés une fois, comme le terrain, puis dessinés d'un bloc au lieu d'une entité à la fois : le plus gros gain sur les grands murs. Chaque cadre est revérifié 5 fois par seconde et préparé à nouveau s'il a changé. Les images animées (GIF), les cadres lumineux et les cadres nommés sont dessinés normalement. Désactivé avec un pack de shaders et l'affichage des boîtes de collision (F3+B). Nécessite l'atlas de maps.",
+  "fastimageframes.config.bakeFrames.tooltip": "Les cadres de maps qui ne changent pas sont préparés une fois, comme le terrain, puis dessinés d'un bloc au lieu d'une entité à la fois : le plus gros gain sur les grands murs. Les cadres normaux et les cadres lumineux sont figés de la même façon. Chaque cadre est revérifié 5 fois par seconde et préparé à nouveau s'il a changé ; un changement de lumière (torche, lumières dynamiques) est appliqué sans le préparer à nouveau. Les images animées (GIF), les cadres en surbrillance (effet Surbrillance) et les cadres nommés que vous visez sont dessinés normalement. Désactivé avec l'affichage des boîtes de collision (F3+B). Nécessite l'atlas de maps.",
   "fastimageframes.config.hdLod": "LOD des images HD",
   "fastimageframes.config.hdLod.tooltip": "Affiche les images HD d'ImageFrame Client à la résolution dont leur taille à l'écran a besoin : les maps lointaines passent dans l'atlas en 128x128, les proches gardent leurs détails (256, 512... jusqu'à la taille de l'image). Économise beaucoup de mémoire vidéo et de FPS. Désactivé : ImageFrame Client affiche chaque image en pleine résolution.",
   "fastimageframes.config.hdLodQuality": "Préréglage",
@@ -129,5 +129,8 @@
   "fastimageframes.midnightconfig.hdLodCustomDowngradeSeconds": "Baisser la qualité après",
   "fastimageframes.config.bakeItemFrames": "Cadres à objets figés",
   "fastimageframes.config.bakeItemFrames.tooltip": "Les cadres qui portent d'autres objets que des maps (et les cadres vides) sont figés comme les murs de maps : enregistrés une fois avec leur objet puis redessinés d'un bloc. Les objets dont l'apparence change (boussoles, horloges...) sont repérés et dessinés normalement. Nécessite les murs de maps figés. Minecraft 1.21.4 à 1.21.11. Aucun changement visuel.",
-  "fastimageframes.midnightconfig.bakeItemFrames": "Cadres à objets figés"
+  "fastimageframes.midnightconfig.bakeItemFrames": "Cadres à objets figés",
+  "fastimageframes.config.occlusionCulling": "Cadres cachés non dessinés",
+  "fastimageframes.config.occlusionCulling.tooltip": "Les cadres cachés derrière des blocs pleins (murs, sols, collines) ne sont pas dessinés du tout, figés ou non. Seuls des blocs pleins et opaques entre vous et le cadre le cachent, donc rien de visible ne disparaît. Désactivé pour les ombres des packs de shaders et pour les cadres en surbrillance.",
+  "fastimageframes.midnightconfig.occlusionCulling": "Cadres cachés non dessinés"
 }

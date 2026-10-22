@@ -84,6 +84,9 @@ public class FifConfig extends MidnightConfig {
     public static boolean bakeItemFrames = true;
 
     @Entry
+    public static boolean occlusionCulling = true;
+
+    @Entry
     public static boolean hdLod = true;
 
     @Entry
@@ -132,6 +135,10 @@ public class FifConfig extends MidnightConfig {
 
     public static boolean bakeActive() {
         return enabled && bakeFrames && atlasActive();
+    }
+
+    public static boolean occlusionActive() {
+        return enabled && occlusionCulling;
     }
 
     public static boolean hdActive() {

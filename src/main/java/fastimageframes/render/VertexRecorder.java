@@ -138,6 +138,17 @@ public final class VertexRecorder implements VertexConsumer {
         packed = null;
     }
 
+    public void relight(int start, int end, int from, int to) {
+        float[] a = data.elements();
+        float light = Float.intBitsToFloat(to);
+        for (int v = start + 7; v < end; v += STRIDE) {
+            if (Float.floatToRawIntBits(a[v]) == from) {
+                a[v] = light;
+            }
+        }
+        packed = null;
+    }
+
     public void replay(VertexConsumer out, float ox, float oy, float oz) {
         int count = data.size() / STRIDE;
         if (count == 0) {
