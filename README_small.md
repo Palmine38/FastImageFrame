@@ -1,6 +1,11 @@
 # Fast ImageFrames
+The best mod to pair with [ImageFrame Client mod](https://modrinth.com/mod/imageframeclient), by [LOOHP](https://modrinth.com/user/LOOHP). Also fixes the incompatibility issue between ImageFrame Client and ImmediatelyFast.
 
-**Item frames and map walls, rendered up to 50 times faster. Same look as vanilla.**
+DM me here on [Discord](https://discord.com/users/852481562288062504) if you encounter any issues with the mod, or if you have suggestions.
+
+![Low and stuttering FPS (Fabulously Optimized base modpack) on a wall of image frames.](https://cdn.modrinth.com/data/cached_images/464e43e14fe40e5798838737e39eefcd8ce50ebd.png)
+![Fabulously Optimized + Fast ImageFrames: the FPS nearly quadrupled while being much more stable.](https://cdn.modrinth.com/data/cached_images/52ff087cc205d94c6d1b328a562174bf1ce647f1.png)
+**Item frames and map walls, rendered up to 50 times faster, same look as vanilla.**
 
 Fast ImageFrames is a client-side Fabric mod. Big map art walls, ImageFrame servers and shops full of item frames stop
 dragging your FPS down. Nothing to install on the server, nothing changes on screen: every feature is checked against
@@ -51,11 +56,11 @@ On a real Paper server with a wall of 2160 HD images (4000 px each): about 30 FP
 about 800 FPS with Fast ImageFrames.
 
 ## Compatibility
+- Minecraft **1.21.4 to 1.21.11** and **26.1 to 26.3** on Fabric.
+- **Sodium**, **Lithium**, **Iris**, even with shader packs, **ImmediatelyFast**, **Entity Culling**, **FerriteCore**, **ETF**, **EMF**, etc. (it should be compatible with every mod).
 
-- **Sodium**, **Iris** (with and without shader packs: baked frames keep their shader ids and their shadows),
-  **Entity Culling**, **ImageFrame Client**, **ImmediatelyFast**: supported.
-- Minecraft **1.21.4 to 1.21.11** and **26.1 to 26.3**, Fabric Loader and Fabric API required.
-- Lots of player heads too? Its sister mod **Voltum** does the same for heads and skulls.
+## Known incompatibilities
+- None
 
 ## Settings
 
