@@ -132,5 +132,8 @@
   "fastimageframes.midnightconfig.bakeItemFrames": "Cadres à objets figés",
   "fastimageframes.config.occlusionCulling": "Cadres cachés non dessinés",
   "fastimageframes.config.occlusionCulling.tooltip": "Les cadres cachés derrière des blocs pleins (murs, sols, collines) ne sont pas dessinés du tout, figés ou non. Seuls des blocs pleins et opaques entre vous et le cadre le cachent, donc rien de visible ne disparaît. Désactivé pour les ombres des packs de shaders et pour les cadres en surbrillance.",
-  "fastimageframes.midnightconfig.occlusionCulling": "Cadres cachés non dessinés"
+  "fastimageframes.midnightconfig.occlusionCulling": "Cadres cachés non dessinés",
+  "fastimageframes.config.smoothMaps": "Cartes lisses en biais",
+  "fastimageframes.config.smoothMaps.tooltip": "Les cartes ont des mipmaps (copies réduites de leur image), comme les textures des blocs : vues de côté ou de loin, elles restent lisses au lieu de scintiller quand vous bougez. Désactivé par défaut. De 1 à 4 : jusqu'où l'image peut être lissée (jusqu'à 64, 32, 16 ou 8 pixels par carte) ; plus haut est plus lisse mais plus doux. Quand une carte est plus grande à l'écran que son image, rien ne change. Coûte un peu de processeur seulement pour les cartes redessinées en permanence.",
+  "fastimageframes.midnightconfig.smoothMaps": "Cartes lisses en biais"
 }

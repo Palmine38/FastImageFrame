@@ -6,6 +6,7 @@ import fastimageframes.hd.HdMaps;
 import fastimageframes.ifc.IfcLink;
 import fastimageframes.mixin.TextureManagerAccessor;
 import fastimageframes.render.FifLayers;
+import fastimageframes.render.MipmappedTexture;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
@@ -52,7 +53,7 @@ public final class MapAtlas {
             this.size = size;
             this.perRow = size / TILE;
             this.id = Identifier.fromNamespaceAndPath("fastimageframes", "map_atlas/" + generation + "_" + index);
-            this.texture = new AtlasPageTexture(id.toString(), size);
+            this.texture = new AtlasPageTexture(id.toString(), size, FifConfig.smoothLevels() + 1);
             Minecraft.getInstance().getTextureManager().register(id, texture);
             this.layer = RenderTypes.text(id);
             FifLayers.registerBatched(layer, 64 * 1024);
@@ -102,6 +103,7 @@ public final class MapAtlas {
     private final Int2ObjectMap<NativeImage> pendingOverrides = new Int2ObjectOpenHashMap<>();
     private final IntSet transparentMaps = new IntOpenHashSet();
     private NativeImage scratch;
+    private NativeImage[] mipScratch;
     private NativeImage colorImage;
     private int generation;
     private int pageSize = FifConfig.atlasSize.getPixels();
@@ -287,7 +289,8 @@ public final class MapAtlas {
     }
 
     public void onConfigChanged() {
-        if (!FifConfig.atlasActive() || FifConfig.atlasSize.getPixels() != pageSize) {
+        if (!FifConfig.atlasActive() || FifConfig.atlasSize.getPixels() != pageSize
+                || !pages.isEmpty() && pages.get(0).texture.levels() != FifConfig.smoothLevels() + 1) {
             resetPages();
         }
     }
@@ -319,15 +322,25 @@ public final class MapAtlas {
     }
 
     private void write(Slot slot, NativeImage image) {
-        if (image.getWidth() == TILE && image.getHeight() == TILE) {
-            slot.page.texture.write(image, slot.x, slot.y);
-            return;
+        if (image.getWidth() != TILE || image.getHeight() != TILE) {
+            if (scratch == null) {
+                scratch = new NativeImage(TILE, TILE, false);
+            }
+            image.resizeSubRectTo(0, 0, image.getWidth(), image.getHeight(), scratch);
+            image = scratch;
         }
-        if (scratch == null) {
-            scratch = new NativeImage(TILE, TILE, false);
+        AtlasPageTexture texture = slot.page.texture;
+        texture.write(image, slot.x, slot.y);
+        if (texture.levels() > 1) {
+            if (mipScratch == null) {
+                mipScratch = MipmappedTexture.mipmaps(image, texture.levels());
+            } else {
+                MipmappedTexture.fill(image, mipScratch);
+            }
+            for (int i = 0; i < mipScratch.length; i++) {
+                texture.writeLevel(mipScratch[i], i + 1, slot.x >> i + 1, slot.y >> i + 1);
+            }
         }
-        image.resizeSubRectTo(0, 0, image.getWidth(), image.getHeight(), scratch);
-        slot.page.texture.write(scratch, slot.x, slot.y);
     }
 
     private void updateTransparency(int mapId, byte[] colors) {

@@ -4,6 +4,7 @@ import com.mojang.blaze3d.platform.NativeImage;
 import fastimageframes.FastImageFrames;
 import fastimageframes.FifConfig;
 import fastimageframes.atlas.MapAtlas;
+import fastimageframes.render.MipmappedTexture;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.Identifier;
@@ -64,13 +65,14 @@ public final class HdMaps {
         }
     }
 
-    private record DecodeResult(Entry entry, long generation, long version, NativeImage image, int nativeSize, int size,
+    private record DecodeResult(Entry entry, long generation, long version, NativeImage image, NativeImage[] mipmaps, int nativeSize, int size,
                                 boolean missing, Throwable error) {
 
         void close() {
             if (image != null) {
                 image.close();
             }
+            MipmappedTexture.close(mipmaps);
         }
     }
 
@@ -85,6 +87,7 @@ public final class HdMaps {
     private long textureBytes;
     private FifConfig.LodQuality lastQuality = FifConfig.hdLodQuality;
     private FifConfig.MinResolution lastMinResolution = FifConfig.hdLodMinResolution;
+    private int lastSmooth = FifConfig.smoothLevels();
 
     private HdMaps() {
     }
@@ -307,17 +310,18 @@ public final class HdMaps {
             int needed = entry.needed;
             entry.decoding = true;
             decodeJobs++;
-            decoder.execute(() -> decoded.add(decode(entry, generation, version, png, needed, minRes)));
+            int smooth = FifConfig.smoothLevels();
+            decoder.execute(() -> decoded.add(decode(entry, generation, version, png, needed, minRes, smooth)));
         }
         decodeCandidates.clear();
     }
 
-    private static DecodeResult decode(Entry entry, long generation, long version, Supplier<byte[]> png, int needed, int minRes) {
+    private static DecodeResult decode(Entry entry, long generation, long version, Supplier<byte[]> png, int needed, int minRes, int smooth) {
         NativeImage image = null;
         try {
             byte[] bytes = png.get();
             if (bytes == null) {
-                return new DecodeResult(entry, generation, version, null, 0, 0, true, null);
+                return new DecodeResult(entry, generation, version, null, null, 0, 0, true, null);
             }
             image = NativeImage.read(bytes);
             int width = image.getWidth();
@@ -331,12 +335,14 @@ public final class HdMaps {
                 image.close();
                 image = resized;
             }
-            return new DecodeResult(entry, generation, version, image, nativeSize, size, false, null);
+            NativeImage[] mipmaps = smooth > 0 && size > MapAtlas.TILE
+                    ? MipmappedTexture.mipmaps(image, MipmappedTexture.levelsFor(image.getWidth(), image.getHeight(), MapAtlas.TILE >> smooth)) : null;
+            return new DecodeResult(entry, generation, version, image, mipmaps, nativeSize, size, false, null);
         } catch (Throwable e) {
             if (image != null) {
                 image.close();
             }
-            return new DecodeResult(entry, generation, version, null, 0, 0, false, e);
+            return new DecodeResult(entry, generation, version, null, null, 0, 0, false, e);
         }
     }
 
@@ -382,7 +388,8 @@ public final class HdMaps {
             }
             HdMapTexture texture;
             try {
-                texture = new HdMapTexture(entry.textureLabel, result.image());
+                texture = new HdMapTexture(entry.textureLabel, result.image(), result.mipmaps());
+                MipmappedTexture.close(result.mipmaps());
             } catch (Throwable e) {
                 result.close();
                 FastImageFrames.LOGGER.warn("Unable to upload the HD image of map {}", entry.mapId, e);
@@ -436,9 +443,10 @@ public final class HdMaps {
             clearAll();
             return;
         }
-        if (FifConfig.hdLodQuality != lastQuality || FifConfig.hdLodMinResolution != lastMinResolution) {
+        if (FifConfig.hdLodQuality != lastQuality || FifConfig.hdLodMinResolution != lastMinResolution || FifConfig.smoothLevels() != lastSmooth) {
             lastQuality = FifConfig.hdLodQuality;
             lastMinResolution = FifConfig.hdLodMinResolution;
+            lastSmooth = FifConfig.smoothLevels();
             for (Entry entry : entries.values()) {
                 cancelDecode(entry);
                 entry.needsRefresh = true;

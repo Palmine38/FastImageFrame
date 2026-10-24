@@ -86,6 +86,9 @@ public class FifConfig extends MidnightConfig {
     @Entry
     public static boolean occlusionCulling = true;
 
+    @Entry(min = 0, max = 4)
+    public static int smoothMaps = 0;
+
     @Entry
     public static boolean hdLod = true;
 
@@ -124,6 +127,10 @@ public class FifConfig extends MidnightConfig {
 
     @Entry(min = 1, max = 64)
     public static int hdMaxConcurrentRequests = 8;
+
+    public static int smoothLevels() {
+        return enabled ? Math.max(0, Math.min(4, smoothMaps)) : 0;
+    }
 
     public static boolean atlasActive() {
         return enabled && mapAtlas;

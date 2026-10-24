@@ -61,6 +61,15 @@ public final class ConfigValues {
         }
     }
 
+    public boolean changed() {
+        for (Field field : entries()) {
+            if (!values.get(field.getName()).equals(read(field))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public void apply() {
         for (Field field : entries()) {
             try {

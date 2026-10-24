@@ -30,6 +30,10 @@ vanilla screenshots.
 - **Glow item frames too**: normal and glow item frames are optimized the same way, and a change of light (torches,
   dynamic lights) does not rebuild anything.
 - **No useless map updates**: the game no longer rebuilds a whole map texture when a packet only moves markers.
+- **Smooth maps at an angle** (setting, off by default, strength 1 to 4): maps get mipmaps like block textures. Seen
+  from the side or from far away they stay smooth instead of shimmering when you move (9 times less shimmer in the
+  test at strength 4). When a map is bigger on screen than its image, it looks the same as before. No FPS cost on map
+  walls; maps repainted all the time cost a little CPU.
 
 ### ImageFrame Client HD images
 

@@ -132,5 +132,8 @@
   "fastimageframes.midnightconfig.bakeItemFrames": "Baked Item Frames",
   "fastimageframes.config.occlusionCulling": "Hidden Frames Culling",
   "fastimageframes.config.occlusionCulling.tooltip": "Frames hidden behind solid blocks (walls, floors, hills) are not drawn at all, baked or not. Only opaque full blocks between you and the frame hide it, so nothing visible ever disappears. Off in the shadow pass of shader packs and for frames with the Glowing effect.",
-  "fastimageframes.midnightconfig.occlusionCulling": "Hidden Frames Culling"
+  "fastimageframes.midnightconfig.occlusionCulling": "Hidden Frames Culling",
+  "fastimageframes.config.smoothMaps": "Smooth Maps at an Angle",
+  "fastimageframes.config.smoothMaps.tooltip": "Maps get mipmaps (smaller copies of their image), like block textures, so seen from the side or far away they stay smooth instead of shimmering when you move. Off by default. 1 to 4: how far the image may be smoothed (down to 64, 32, 16 or 8 pixels per map); higher is smoother but softer. When a map is bigger on screen than its image, nothing changes. Costs some CPU only for maps that are repainted all the time.",
+  "fastimageframes.midnightconfig.smoothMaps": "Smooth Maps at an Angle"
 }

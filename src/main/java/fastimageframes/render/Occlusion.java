@@ -1,7 +1,7 @@
 package fastimageframes.render;
 
 import fastimageframes.FifConfig;
-import it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -19,11 +19,15 @@ public final class Occlusion {
     private static final long SETTLE_MILLIS = 1000L;
     private static final long PRUNE_MILLIS = 250L;
     private static final int NEAR_SECTIONS = 5;
-    private static final int TESTS_PER_FRAME = 4096;
+    private static final int TESTS_PER_FRAME = 1024;
+    private static final long NANOS_PER_FRAME = 400_000L;
+    private static final int MAX_CACHED = 1 << 16;
 
-    private static final Long2ByteOpenHashMap BLOCKS = new Long2ByteOpenHashMap();
+    private static final Long2IntOpenHashMap BLOCKS = new Long2IntOpenHashMap();
     private static final BlockPos.MutableBlockPos POS = new BlockPos.MutableBlockPos();
     private static final double[] BOX = new double[6];
+    private static final int[] CELL = new int[3];
+    private static final int[] PROBE = new int[3];
     private static final Long2LongOpenHashMap CHANGED = new Long2LongOpenHashMap();
 
     private static ClientLevel level;
@@ -36,7 +40,8 @@ public final class Occlusion {
     private static long now;
     private static long pruned;
     private static int budget;
-    private static int generation;
+    private static long deadline;
+    private static int generation = 1;
 
     private Occlusion() {
     }
@@ -49,8 +54,10 @@ public final class Occlusion {
             level = null;
             return;
         }
-        now = System.nanoTime() / 1000000L;
+        long nanos = System.nanoTime();
+        now = nanos / 1000000L;
         budget = TESTS_PER_FRAME;
+        deadline = nanos + NANOS_PER_FRAME;
         if (!CHANGED.isEmpty() && now - pruned >= PRUNE_MILLIS) {
             pruned = now;
             CHANGED.values().removeIf(time -> now - time >= SETTLE_MILLIS);
@@ -59,15 +66,25 @@ public final class Occlusion {
         int x = Mth.floor(camera.x);
         int y = Mth.floor(camera.y);
         int z = Mth.floor(camera.z);
-        if (minecraft.level != level || x != cellX || y != cellY || z != cellZ || dirty) {
+        if (minecraft.level != level) {
             clear();
             level = minecraft.level;
+            dirty = true;
+        }
+        if (x != cellX || y != cellY || z != cellZ || dirty) {
+            generation++;
+            if (BLOCKS.size() > MAX_CACHED) {
+                BLOCKS.clear();
+            }
             cellX = x;
             cellY = y;
             cellZ = z;
             dirty = false;
-            enabled = !level.getBlockState(POS.set(x, y, z)).isSolidRender();
+            CELL[0] = x;
+            CELL[1] = y;
+            CELL[2] = z;
         }
+        enabled = !level.getBlockState(POS.set(x, y, z)).isSolidRender();
     }
 
     public static void blocksChanged(int x, int y, int z) {
@@ -81,6 +98,7 @@ public final class Occlusion {
     private static void clear() {
         generation++;
         BLOCKS.clear();
+        CHANGED.clear();
     }
 
     public static boolean active() {
@@ -101,32 +119,41 @@ public final class Occlusion {
 
     public static boolean blockHidden(BlockPos pos, double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
         long key = pos.asLong();
-        byte cached = BLOCKS.get(key);
+        int cached = BLOCKS.get(key);
         unsettled = false;
-        if (cached == 0) {
-            cached = test(pos.getX() + minX, pos.getY() + minY, pos.getZ() + minZ, pos.getX() + maxX, pos.getY() + maxY, pos.getZ() + maxZ);
-            if (!unsettled) {
-                BLOCKS.put(key, cached);
-            }
+        if (cached != 0 && cached >>> 2 == generation) {
+            return (cached & 3) == HIDDEN;
         }
-        return cached == HIDDEN;
+        if (cached != 0 && (cached & 3) == VISIBLE && budget < TESTS_PER_FRAME / 2 || !spend()) {
+            unsettled = true;
+            return false;
+        }
+        byte result = test(pos.getX() + minX, pos.getY() + minY, pos.getZ() + minZ, pos.getX() + maxX, pos.getY() + maxY, pos.getZ() + maxZ);
+        BLOCKS.put(key, unsettled ? VISIBLE : generation << 2 | result);
+        return result == HIDDEN;
+    }
+
+    private static boolean spend() {
+        if (budget <= 0) {
+            return false;
+        }
+        if ((budget & 15) == 0 && System.nanoTime() > deadline) {
+            budget = 0;
+            return false;
+        }
+        budget--;
+        return true;
     }
 
     private static byte test(double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
-        if (budget <= 0) {
-            unsettled = true;
-            return VISIBLE;
-        }
-        budget--;
         BOX[0] = minX;
         BOX[1] = minY;
         BOX[2] = minZ;
         BOX[3] = maxX;
         BOX[4] = maxY;
         BOX[5] = maxZ;
-        int[] cell = {cellX, cellY, cellZ};
         for (int axis = 0; axis < 3; axis++) {
-            if (slabs(axis, cell)) {
+            if (slabs(axis, CELL)) {
                 return HIDDEN;
             }
         }
@@ -196,7 +223,7 @@ public final class Occlusion {
     }
 
     private static boolean opaque(int d, int k, int u, int u0, int u1, int v, int v0, int v1) {
-        int[] p = new int[3];
+        int[] p = PROBE;
         p[d] = k;
         for (int a = u0; a <= u1; a++) {
             p[u] = a;
