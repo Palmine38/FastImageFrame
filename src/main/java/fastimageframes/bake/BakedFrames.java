@@ -445,6 +445,20 @@ public final class BakedFrames {
         return SectionMesh.draws;
     }
 
+    public int strandedFrames() {
+        int count = 0;
+        for (Section section : sections.values()) {
+            if (section.dirty || !section.hasData) {
+                for (ItemFrame frame : section.frames) {
+                    if (((BakeableFrame) frame).fif$isBaked()) {
+                        count++;
+                    }
+                }
+            }
+        }
+        return count;
+    }
+
     public int bakedCount() {
         int count = 0;
         for (Section section : sections.values()) {
@@ -468,7 +482,7 @@ public final class BakedFrames {
             ((BakeableFrame) frame).fif$setProbe(0, tick, Long.MIN_VALUE, false, NOT_BAKEABLE);
             Section section = sections.computeIfAbsent(SectionPos.asLong(frame.blockPosition()), Section::new);
             section.frames.add(frame);
-            section.dirty = true;
+            markDirty(section);
         }
     }
 
