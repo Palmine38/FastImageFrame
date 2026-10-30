@@ -70,6 +70,16 @@ public final class Occlusion {
         }
     }
 
+    public static void blocksChanged(int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
+        for (int x = minX >> 4; x <= maxX >> 4; x++) {
+            for (int y = minY >> 4; y <= maxY >> 4; y++) {
+                for (int z = minZ >> 4; z <= maxZ >> 4; z++) {
+                    blocksChanged(x, y, z);
+                }
+            }
+        }
+    }
+
     public static void blocksChanged(int x, int y, int z) {
         if (Math.abs(x - (cellX >> 4)) > NEAR_SECTIONS || Math.abs(y - (cellY >> 4)) > NEAR_SECTIONS || Math.abs(z - (cellZ >> 4)) > NEAR_SECTIONS) {
             return;

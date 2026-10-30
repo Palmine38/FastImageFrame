@@ -176,6 +176,16 @@ public final class HdMaps {
         return entries.containsKey(mapId);
     }
 
+    public long sourceVersion(int mapId) {
+        Entry entry = entries.get(mapId);
+        return entry == null || entry.sourceMissing || entry.failedVersion == entry.version ? 0 : entry.version;
+    }
+
+    public Supplier<byte[]> source(int mapId) {
+        Entry entry = entries.get(mapId);
+        return entry == null || entry.sourceMissing ? null : entry.png;
+    }
+
     public long getTextureBytes() {
         return textureBytes;
     }

@@ -74,8 +74,10 @@ import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 
 public final class BakedFrames {
 
@@ -217,6 +219,7 @@ public final class BakedFrames {
     private static final long REPORT_EVERY_TICKS = 60 * 20;
     private static final int PROBE_EVERY_TICKS = 32;
     private static final long SETTLE_TICKS = 200;
+    private static final long STABLE_PROBE_TICKS = 1200;
     private final java.util.Set<RenderType> decorationLayers = new ReferenceOpenHashSet<>();
     private String example = "";
     private String lastRejection = "";
@@ -271,6 +274,9 @@ public final class BakedFrames {
     }
 
     public static int cull(Entity entity, Frustum frustum) {
+        if (!(entity instanceof ItemFrame)) {
+            return 0;
+        }
         BakedFrames bakedFrames = INSTANCE;
         boolean shadow = bakedFrames.shaders && Shaders.shadowPass();
         if (!shadow) {
@@ -295,8 +301,61 @@ public final class BakedFrames {
     }
 
     private static boolean hidden(ItemFrame frame) {
-        return Occlusion.active() && !Shaders.shadowPass() && !Minecraft.getInstance().shouldEntityAppearGlowing(frame)
-                && Occlusion.blockHidden(frame.blockPosition(), 0.0);
+        if (!Occlusion.active() || Shaders.shadowPass()) {
+            return false;
+        }
+        BakeableFrame bakeable = (BakeableFrame) frame;
+        int generation = Occlusion.generation();
+        boolean hidden;
+        if (bakeable.fif$hiddenGeneration() == generation) {
+            hidden = bakeable.fif$hidden();
+        } else {
+            hidden = Occlusion.blockHidden(frame.blockPosition(), 0.0);
+            if (Occlusion.settled()) {
+                bakeable.fif$setHidden(generation, hidden);
+            }
+        }
+        return hidden && !Minecraft.getInstance().shouldEntityAppearGlowing(frame);
+    }
+
+    public static Iterable<Entity> visibleEntities(Iterable<Entity> entities, Frustum frustum) {
+        BakedFrames bakedFrames = INSTANCE;
+        if (!bakedFrames.active || bakedFrames.shaders != Shaders.active() || bakedFrames.shaders && Shaders.shadowPass()) {
+            return entities;
+        }
+        bakedFrames.frustum = frustum;
+        return () -> new UnbakedIterator(entities.iterator());
+    }
+
+    private static final class UnbakedIterator implements Iterator<Entity> {
+
+        private final Iterator<Entity> entities;
+        private Entity next;
+
+        private UnbakedIterator(Iterator<Entity> entities) {
+            this.entities = entities;
+        }
+
+        @Override
+        public boolean hasNext() {
+            while (next == null && entities.hasNext()) {
+                Entity entity = entities.next();
+                if (!(entity instanceof ItemFrame) || !((BakeableFrame) entity).fif$isBaked()) {
+                    next = entity;
+                }
+            }
+            return next != null;
+        }
+
+        @Override
+        public Entity next() {
+            if (!hasNext()) {
+                throw new NoSuchElementException();
+            }
+            Entity entity = next;
+            next = null;
+            return entity;
+        }
     }
 
     public void onFrameStart() {
@@ -694,14 +753,18 @@ public final class BakedFrames {
             return bakeable.fif$probed();
         }
         int signature = probe(minecraft, frame, section, camera, stack);
-        long next = tick + PROBE_EVERY_TICKS + (frame.getId() & (PROBE_EVERY_TICKS - 1));
         if (!sameKey) {
-            bakeable.fif$setProbe(key, tick, next, false, signature);
+            bakeable.fif$setProbe(key, tick, nextProbe(frame, PROBE_EVERY_TICKS), false, signature);
         } else {
             boolean changing = bakeable.fif$volatile() || tick - bakeable.fif$keySince() > SETTLE_TICKS && signature != bakeable.fif$probed();
-            bakeable.fif$setProbe(key, bakeable.fif$keySince(), next, changing, signature);
+            int every = changing ? PROBE_EVERY_TICKS : PROBE_EVERY_TICKS << (int) Math.min(2, (tick - bakeable.fif$keySince()) / STABLE_PROBE_TICKS);
+            bakeable.fif$setProbe(key, bakeable.fif$keySince(), nextProbe(frame, every), changing, signature);
         }
         return signature;
+    }
+
+    private long nextProbe(ItemFrame frame, int every) {
+        return tick + every + (frame.getId() & (every - 1));
     }
 
     private static int itemKey(Minecraft minecraft, ItemFrame frame, ItemStack stack) {

@@ -1,5 +1,7 @@
 package fastimageframes.gametest;
 
+import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.ints.IntList;
 import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
 import it.unimi.dsi.fastutil.ints.IntSet;
 import net.fabricmc.api.ModInitializer;
@@ -27,6 +29,7 @@ public class FakeImageFrameServer implements ModInitializer {
     private static final int CHUNK_SIZE = 32000;
 
     public static final Map<Integer, byte[]> HD_IMAGES = new ConcurrentHashMap<>();
+    public static final Map<Integer, int[]> IMAGE_MAPS = new ConcurrentHashMap<>();
     public static final AtomicInteger REQUESTS = new AtomicInteger();
     public static final AtomicInteger ACKNOWLEDGED = new AtomicInteger();
     public static final Map<Integer, AtomicInteger> DENY_REMAINING = new ConcurrentHashMap<>();
@@ -38,6 +41,7 @@ public class FakeImageFrameServer implements ModInitializer {
     private static Constructor<?> responseConstructor;
     private static Constructor<?> multipartConstructor;
     private static Constructor<?> updatedConstructor;
+    private static Constructor<?> detailsConstructor;
 
     public static int requests(int mapId) {
         AtomicInteger count = REQUESTS_PER_MAP.get(mapId);
@@ -85,6 +89,19 @@ public class FakeImageFrameServer implements ModInitializer {
             multipartConstructor = Class.forName(PAYLOADS + "ClientboundHdImageMultipartResponse").getConstructor(int.class, int.class, int.class, byte[].class, boolean.class);
             updatedConstructor = Class.forName(PAYLOADS + "ClientboundImageUpdatedSignal").getConstructor(IntSet.class, IntSet.class);
             CustomPacketPayload.Type ackType = (CustomPacketPayload.Type) Class.forName(PAYLOADS + "ServerboundAcknowledgement").getField("ID").get(null);
+            detailsConstructor = Class.forName(PAYLOADS + "ClientboundImageMapDetailsResponse").getConstructor(int.class, int.class, int.class, IntList.class);
+            CustomPacketPayload.Type detailsType = (CustomPacketPayload.Type) Class.forName(PAYLOADS + "ServerboundImageMapDetailsRequest").getField("ID").get(null);
+            ServerPlayNetworking.registerGlobalReceiver(detailsType, (ServerPlayNetworking.PlayPayloadHandler) (payload, context) -> {
+                try {
+                    int index = (int) payload.getClass().getMethod("index").invoke(payload);
+                    int[] image = IMAGE_MAPS.get(index);
+                    if (image != null) {
+                        send(context.player(), detailsConstructor.newInstance(index, image[0], image[1], new IntArrayList(Arrays.copyOfRange(image, 2, image.length))));
+                    }
+                } catch (ReflectiveOperationException e) {
+                    throw new RuntimeException(e);
+                }
+            });
             CustomPacketPayload.Type requestType = (CustomPacketPayload.Type) Class.forName(PAYLOADS + "ServerboundHdImageRequest").getField("ID").get(null);
 
             ServerPlayNetworking.registerGlobalReceiver(ackType, (ServerPlayNetworking.PlayPayloadHandler) (payload, context) -> {

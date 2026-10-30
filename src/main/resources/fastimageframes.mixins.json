@@ -35,6 +35,7 @@
     "EntityRenderDispatcherMixin",
     "ItemFrameMixin",
     "IfcClientMixin",
+    "TooltipPreviewMixin",
     "LevelRendererAccessor",
     "ViewAreaAccessor"
   ]

@@ -27,6 +27,9 @@ vanilla screenshots.
   seen. Resource packs that change the frame (invisible frames...) are respected.
 - **Hidden frames are skipped**: frames behind blocks are not drawn, baked or not, using the game's (or Sodium's)
   visibility plus a block by block test.
+- **Baked frames leave the entity list** (1.7.2): the game (and Iris, which sorts every entity by type each frame)
+  no longer looks at baked frames one by one. With Sodium and Iris, the entity pass of a scene with 1600 baked maps and
+  400 changing item frames takes 21% less time with a still camera and 37% less while moving.
 - **Glow item frames too**: normal and glow item frames are optimized the same way, and a change of light (torches,
   dynamic lights) does not rebuild anything.
 - **No useless map updates**: the game no longer rebuilds a whole map texture when a packet only moves markers.
@@ -40,6 +43,10 @@ With [ImageFrame Client](https://modrinth.com/mod/imageframeclient) installed, F
 - **Cache in RAM and on disk**, one folder per server: images show up instantly next time you join, without being
   downloaded again (only when the map still matches).
 - **Smart downloads**: images are requested in the order they appear, a few at a time, refusals are retried.
+- **Map previews in the inventory** (setting, on by default): the previews of maps and combined images in ImageFrame
+  Client tooltips are drawn by Fast ImageFrames, with the HD image when there is one, shrunk smoothly to the exact
+  pixels of your screen instead of a pixelated, shimmering copy, and as one picture for a whole combined image. Maps
+  showing banner or explorer markers keep the ImageFrame Client preview.
 
 ## Measured gains
 

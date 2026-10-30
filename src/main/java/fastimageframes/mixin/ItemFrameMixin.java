@@ -49,6 +49,12 @@ public class ItemFrameMixin implements BakeableFrame {
     @Unique
     private int fif$probed;
 
+    @Unique
+    private int fif$hiddenGeneration;
+
+    @Unique
+    private boolean fif$hidden;
+
     @Inject(method = "onSyncedDataUpdated", at = @At("TAIL"))
     private void fif$dataChanged(EntityDataAccessor<?> accessor, CallbackInfo ci) {
         BakedFrames.INSTANCE.onFrameChanged((ItemFrame) (Object) this);
@@ -128,6 +134,22 @@ public class ItemFrameMixin implements BakeableFrame {
         fif$keySince = keySince;
         fif$nextProbe = nextProbe;
         fif$volatile = changing;
+    }
+
+    @Override
+    public int fif$hiddenGeneration() {
+        return fif$hiddenGeneration;
+    }
+
+    @Override
+    public boolean fif$hidden() {
+        return fif$hidden;
+    }
+
+    @Override
+    public void fif$setHidden(int generation, boolean hidden) {
+        fif$hiddenGeneration = generation;
+        fif$hidden = hidden;
     }
 
     @Override

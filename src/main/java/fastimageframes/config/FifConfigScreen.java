@@ -32,7 +32,7 @@ public class FifConfigScreen extends Screen {
     private static final int[] DISTANCES = range(2, 64);
     private static final int[] DOWNGRADE_SECONDS = range(0, 30);
 
-    private static final String[] RENDER_OPTIONS = {"mapAtlas", "atlasSize", "batchFrames", "optimizedFrameModel", "skipRedundantMapUpdates", "bakeFrames", "bakeItemFrames", "occlusionCulling"};
+    private static final String[] RENDER_OPTIONS = {"mapAtlas", "atlasSize", "batchFrames", "optimizedFrameModel", "skipRedundantMapUpdates", "bakeFrames", "bakeItemFrames", "occlusionCulling", "smoothMaps", "mapPreviews"};
     private static final String[] LOD_OPTIONS = {"hdLod", "hdLodQuality", "hdLodCustomDistance", "hdLodCustomDowngradeSeconds", "hdLodMinResolution",
             "hdTextureMemoryMB", "hdUnloadUnusedAfterSeconds"};
     private static final String[] CACHE_OPTIONS = {"hdRamCacheMB", "hdDiskCache", "hdDiskCacheMaxMB", "hdTrustValidatedDiskCache", "hdMaxConcurrentRequests"};
@@ -52,6 +52,7 @@ public class FifConfigScreen extends Screen {
 
     private final Screen parent;
     private final ConfigValues values;
+    private Button apply;
     private Page page = Page.MAIN;
     private HeaderAndFooterLayout layout;
 
@@ -85,7 +86,11 @@ public class FifConfigScreen extends Screen {
 
         LinearLayout footer = LinearLayout.horizontal().spacing(8);
         footer.addChild(Button.builder(CommonComponents.GUI_CANCEL, button -> close()).width(120).build());
-        footer.addChild(Button.builder(Component.translatable(KEY + "apply"), button -> values.apply()).width(120).build());
+        apply = footer.addChild(Button.builder(Component.translatable(KEY + "apply"), button -> {
+            values.apply();
+            button.active = false;
+        }).width(120).build());
+        apply.active = values.changed();
         footer.addChild(Button.builder(CommonComponents.GUI_DONE, button -> {
             values.apply();
             close();
@@ -94,6 +99,14 @@ public class FifConfigScreen extends Screen {
 
         layout.visitWidgets(this::addRenderableWidget);
         repositionElements();
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+        if (apply != null) {
+            apply.active = values.changed();
+        }
     }
 
     @Override
@@ -148,6 +161,8 @@ public class FifConfigScreen extends Screen {
         rows.addChild(activeIf(toggle("bakeFrames", WIDTH), values.bool("mapAtlas")));
         rows.addChild(activeIf(toggle("bakeItemFrames", WIDTH), values.bool("mapAtlas") && values.bool("bakeFrames")));
         rows.addChild(toggle("occlusionCulling", WIDTH));
+        rows.addChild(slider("smoothMaps", range(0, 4), value -> value == 0 ? Component.translatable("options.off") : Component.literal(Integer.toString(value))));
+        rows.addChild(toggle("mapPreviews", WIDTH));
     }
 
     private void lod(GridLayout.RowHelper rows) {

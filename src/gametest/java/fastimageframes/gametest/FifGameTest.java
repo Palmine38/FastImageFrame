@@ -52,6 +52,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Random;
@@ -83,6 +84,8 @@ public class FifGameTest implements FabricClientGameTest {
             client.options.enableVsync().set(false);
             client.options.cloudStatus().set(CloudStatus.OFF);
             client.options.inactivityFpsLimit().set(InactivityFpsLimit.MINIMIZED);
+            FifConfig.smoothMaps = System.getenv("FIF_SMOOTH_ONLY") != null ? 4 : 0;
+            FifConfig.onChanged();
         });
         if (FakeImageFrameServer.available()) {
             setImageFrameClientOption(context, "notifyWhenServerSupports", false);
@@ -154,6 +157,42 @@ public class FifGameTest implements FabricClientGameTest {
         }
         if (System.getenv("FIF_BENCH_ONLY") != null) {
             benchmarkOnly(context);
+            return;
+        }
+        if (System.getenv("FIF_BLINK_ONLY") != null) {
+            try (TestSingleplayerContext world = context.worldBuilder().create()) {
+                prepareWorld(world);
+                context.waitTicks(200);
+                waitForChunks(world);
+                blinkChecks(context, world, false);
+                if (FakeImageFrameServer.available() && IfcLink.isLinked()) {
+                    blinkChecks(context, world, true);
+                }
+                logResults();
+                context.waitTicks(100);
+            }
+            return;
+        }
+        if (System.getenv("FIF_SMOOTH_ONLY") != null) {
+            try (TestSingleplayerContext world = context.worldBuilder().create()) {
+                prepareWorld(world);
+                context.waitTicks(200);
+                waitForChunks(world);
+                smoothMapsChecks(context, world);
+                logResults();
+                context.waitTicks(100);
+            }
+            return;
+        }
+        if (System.getenv("FIF_PREVIEW_ONLY") != null) {
+            try (TestSingleplayerContext world = context.worldBuilder().create()) {
+                prepareWorld(world);
+                context.waitTicks(200);
+                waitForChunks(world);
+                previewChecks(context, world);
+                logResults();
+                context.waitTicks(100);
+            }
             return;
         }
         if (System.getenv("FIF_SCREEN_ONLY") != null) {
@@ -771,6 +810,176 @@ public class FifGameTest implements FabricClientGameTest {
         return stack;
     }
 
+    private void blinkChecks(ClientGameTestContext context, TestSingleplayerContext world, boolean hd) {
+        int wallZ = baseZ - 4;
+        int half = WALL / 2;
+        List<Integer> ids = new ArrayList<>();
+        context.runOnClient(client -> FifConfig.hdMaxConcurrentRequests = 64);
+        world.getServer().runOnServer(server -> {
+            ServerLevel level = server.overworld();
+            wallFrames.forEach(ItemFrame::discard);
+            wallFrames.clear();
+            Random random = new Random(hd ? 5 : 1);
+            for (int row = 0; row < WALL; row++) {
+                for (int col = 0; col < WALL; col++) {
+                    level.setBlockAndUpdate(new BlockPos(baseX - half + col, baseY + row, wallZ - 1), Blocks.STONE.defaultBlockState());
+                    MapId id = randomMap(level, random, false);
+                    if (hd) {
+                        FakeImageFrameServer.HD_IMAGES.put(id.id(), png(col, row, WALL, WALL, 300));
+                    }
+                    ids.add(id.id());
+                    wallFrames.add(spawnFrame(level, new BlockPos(baseX - half + col, baseY + row, wallZ), Direction.SOUTH, id, false));
+                }
+            }
+        });
+        world.getServer().runCommand(String.format(Locale.ROOT, "tp @a %.1f %d %.1f 180 -25", baseX + 0.5, baseY + 10, wallZ + VIEW_DISTANCE));
+        context.waitTicks(100);
+        waitForChunks(world);
+        if (hd) {
+            context.waitFor(client -> ids.stream().allMatch(HdMaps.INSTANCE::isInAtlas), 2400);
+        }
+        context.waitTicks(60);
+        int stranded = 0;
+        int samples = 0;
+        for (int i = 0; i < 16; i++) {
+            int col = i;
+            world.getServer().runOnServer(server -> {
+                ServerLevel level = server.overworld();
+                level.setBlockAndUpdate(new BlockPos(baseX - half + col, baseY + WALL, wallZ - 1), Blocks.STONE.defaultBlockState());
+                wallFrames.add(spawnFrame(level, new BlockPos(baseX - half + col, baseY + WALL, wallZ), Direction.SOUTH, randomMap(level, new Random(col), false), false));
+            });
+            for (int t = 0; t < 3; t++) {
+                context.waitTick();
+                stranded += context.computeOnClient(client -> BakedFrames.INSTANCE.strandedFrames());
+                samples++;
+            }
+        }
+        check(stranded == 0, String.format(Locale.ROOT, "frames arriving next to a baked wall (%s): %d baked frames left in a section being rebuilt over %d samples",
+                hd ? "HD maps" : "maps", stranded, samples));
+    }
+
+    private static void setSmooth(ClientGameTestContext context, boolean enabled) {
+        context.runOnClient(client -> {
+            FifConfig.smoothMaps = enabled ? 4 : 0;
+            FifConfig.onChanged();
+        });
+        context.waitTicks(40);
+    }
+
+    private void smoothMapsChecks(ClientGameTestContext context, TestSingleplayerContext world) {
+        int wallZ = baseZ - 4;
+        int half = WALL / 2;
+        List<MapId> maps = new ArrayList<>();
+        world.getServer().runCommand("gamemode spectator @a");
+        context.runOnClient(client -> client.options.bobView().set(false));
+        world.getServer().runOnServer(server -> {
+            ServerLevel level = server.overworld();
+            Random random = new Random(1);
+            for (int row = 0; row < WALL; row++) {
+                for (int col = 0; col < WALL; col++) {
+                    level.setBlockAndUpdate(new BlockPos(baseX - half + col, baseY + row, wallZ - 1), Blocks.STONE.defaultBlockState());
+                    MapId id = randomMap(level, random, false, true);
+                    maps.add(id);
+                    wallFrames.add(spawnFrame(level, new BlockPos(baseX - half + col, baseY + row, wallZ), Direction.SOUTH, id, false));
+                }
+            }
+        });
+        String front = String.format(Locale.ROOT, "tp @a %.1f %d %.1f 180 -25", baseX + 0.5, baseY, wallZ + VIEW_DISTANCE);
+        String close = String.format(Locale.ROOT, "tp @a %.1f %d %.1f 180 0", baseX + 0.5, baseY + 5, wallZ + 3.5);
+        String side = String.format(Locale.ROOT, "tp @a %.2f %d %.2f 180 0", baseX + half + 2.5, baseY + 10, wallZ + 8.0);
+        world.getServer().runCommand(front);
+        context.waitTicks(100);
+        waitForChunks(world);
+        context.waitTicks(60);
+
+        for (String[] view : new String[][]{{"front", front}, {"close", close}, {"side", side}}) {
+            world.getServer().runCommand(view[1]);
+                setSmooth(context, true);
+            context.waitTicks(40);
+            Path smooth = context.takeScreenshot("smooth-" + view[0] + "-on");
+            setSmooth(context, false);
+            context.waitTicks(40);
+            Path sharp = context.takeScreenshot("smooth-" + view[0] + "-off");
+            setFif(context, false);
+            context.waitTicks(40);
+            Path vanilla = context.takeScreenshot("smooth-" + view[0] + "-vanilla");
+            setFif(context, true);
+            double off = differingPercent(vanilla, sharp);
+            check(off < MAX_VISUAL_DIFF, String.format(Locale.ROOT, "%s view, smooth maps off: %.3f%% pixels differ from vanilla", view[0], off));
+            String line = String.format(Locale.ROOT, "%s view, smooth maps on: %.3f%% pixels differ from vanilla", view[0], differingPercent(vanilla, smooth));
+            results.add(line);
+            LOGGER.info("[FIF] {}", line);
+        }
+
+        double[] shimmer = new double[3];
+        for (int mode = 0; mode < 3; mode++) {
+            setFif(context, mode != 2);
+            setSmooth(context, mode == 0);
+            double total = 0;
+            Path last = null;
+            int steps = 8;
+            for (int step = 0; step <= steps; step++) {
+                world.getServer().runCommand(String.format(Locale.ROOT, "tp @a %.2f %d %.4f 180 0", baseX + half + 2.5, baseY + 10, wallZ + 8.0 - step / 256.0));
+                        context.waitTicks(step == 0 ? 60 : 8);
+                Path shot = context.takeScreenshot("smooth-shimmer-" + mode + "-" + step);
+                if (last != null) {
+                    total += differingPercent(last, shot);
+                }
+                last = shot;
+            }
+            shimmer[mode] = total / steps;
+        }
+        setFif(context, true);
+        setSmooth(context, true);
+        String shimmerLine = String.format(Locale.ROOT, "shimmer at an angle per 1/256 block step: smooth maps %.2f%%, off %.2f%%, vanilla %.2f%%",
+                shimmer[0], shimmer[1], shimmer[2]);
+        results.add(shimmerLine);
+        LOGGER.info("[FIF] {}", shimmerLine);
+
+        int rounds = Integer.parseInt(System.getenv().getOrDefault("FIF_ROUNDS", "3"));
+        for (String[] view : new String[][]{{"1600 maps, front", front}, {"1600 maps, side", side}}) {
+            world.getServer().runCommand(view[1]);
+                for (int round = 0; round < rounds; round++) {
+                for (int step = 0; step < 2; step++) {
+                    boolean on = (round + step) % 2 == 0;
+                    setSmooth(context, on);
+                    results.add(measure(context, view[0] + " | smooth maps " + (on ? "on " : "off")));
+                }
+            }
+        }
+
+        world.getServer().runCommand(front);
+        int[] tick = {0};
+        net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.EndTick painter = server -> {
+            if (tick[0] < 0) {
+                return;
+            }
+            tick[0]++;
+            ServerLevel level = server.overworld();
+            for (int i = 0; i < 400; i++) {
+                MapItemSavedData data = level.getMapData(maps.get(i));
+                if (data != null) {
+                    int corner = (tick[0] * 7 + i * 13) % 112;
+                    for (int x = 0; x < 16; x++) {
+                        for (int z = 0; z < 16; z++) {
+                            data.setColor(corner + x, corner + z, (byte) (((tick[0] + i) % 60 + 1) * 4));
+                        }
+                    }
+                }
+            }
+        };
+        net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK.register(painter);
+        for (int round = 0; round < rounds; round++) {
+            for (int step = 0; step < 2; step++) {
+                boolean on = (round + step) % 2 == 0;
+                setSmooth(context, on);
+                results.add(measure(context, "400 maps repainted | smooth maps " + (on ? "on " : "off")));
+            }
+        }
+        tick[0] = -1;
+        setSmooth(context, true);
+    }
+
     private void hdWallBenchmark(ClientGameTestContext context, TestSingleplayerContext world) {
         int wallZ = baseZ - 4;
         List<Integer> ids = new ArrayList<>();
@@ -1240,6 +1449,108 @@ public class FifGameTest implements FabricClientGameTest {
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private void previewChecks(ClientGameTestContext context, TestSingleplayerContext world) {
+        if (!FakeImageFrameServer.available() || !IfcLink.isLinked()) {
+            results.add("ImageFrame Client not loaded, map preview checks skipped");
+            return;
+        }
+        int[] single = new int[1];
+        int[] combined = new int[8];
+        combined[0] = 3;
+        combined[1] = 2;
+        world.getServer().runCommand("gamemode survival @a");
+        world.getServer().runOnServer(server -> {
+            ServerLevel level = server.overworld();
+            Random random = new Random(11);
+            MapId id = randomMap(level, random, false);
+            single[0] = id.id();
+            FakeImageFrameServer.HD_IMAGES.put(id.id(), detailPng(0, 0, 1, 1, 512));
+            for (int i = 0; i < 6; i++) {
+                MapId part = randomMap(level, random, i == 4);
+                combined[i + 2] = part.id();
+                FakeImageFrameServer.HD_IMAGES.put(part.id(), detailPng(i % 3, i / 3, 3, 2, 256));
+            }
+            FakeImageFrameServer.IMAGE_MAPS.put(77, combined);
+            var player = server.getPlayerList().getPlayers().get(0);
+            ItemStack map = new ItemStack(Items.FILLED_MAP);
+            map.set(DataComponents.MAP_ID, id);
+            player.getInventory().setItem(9, map);
+            ItemStack paper = new ItemStack(Items.PAPER);
+            net.minecraft.nbt.CompoundTag tag = new net.minecraft.nbt.CompoundTag();
+            tag.putInt("CombinedImageMap", 77);
+            paper.set(DataComponents.CUSTOM_DATA, net.minecraft.world.item.component.CustomData.of(tag));
+            player.getInventory().setItem(10, paper);
+            for (int i = 0; i < 6; i++) {
+                ItemStack part = new ItemStack(Items.FILLED_MAP);
+                part.set(DataComponents.MAP_ID, new MapId(combined[i + 2]));
+                player.getInventory().setItem(18 + i, part);
+            }
+        });
+        context.waitTicks(40);
+        context.setScreen(() -> new net.minecraft.client.gui.screens.inventory.InventoryScreen(Minecraft.getInstance().player));
+        context.waitTicks(10);
+        for (int slot = 0; slot < 2; slot++) {
+            String name = slot == 0 ? "map" : "combined";
+            int column = slot;
+            double[] cursor = context.computeOnClient(client -> {
+                double scale = client.getWindow().getGuiScale();
+                int left = (client.getWindow().getGuiScaledWidth() - 176) / 2;
+                int top = (client.getWindow().getGuiScaledHeight() - 166) / 2;
+                return new double[]{(left + 8 + column * 18 + 8) * scale, (top + 84 + 8) * scale};
+            });
+            context.getInput().setCursorPos(cursor[0], cursor[1]);
+            setPreviews(context, false);
+            context.waitTicks(60);
+            Path ifc = context.takeScreenshot("preview-" + name + "-ifc");
+            setPreviews(context, true);
+            context.waitTicks(60);
+            int before = context.computeOnClient(client -> fastimageframes.render.MapPreviews.INSTANCE.drawn());
+            context.waitTicks(10);
+            int drawn = context.computeOnClient(client -> fastimageframes.render.MapPreviews.INSTANCE.drawn()) - before;
+            Path fif = context.takeScreenshot("preview-" + name + "-fif");
+            int[] ids = slot == 0 ? single : Arrays.copyOfRange(combined, 2, combined.length);
+            int hd = context.computeOnClient(client -> {
+                int count = 0;
+                for (int id : ids) {
+                    if (HdMaps.INSTANCE.sourceVersion(id) != 0) {
+                        count++;
+                    }
+                }
+                return count;
+            });
+            check(drawn > 0, "map preview of the " + name + " drawn by Fast ImageFrames: " + drawn + " times in 10 ticks, HD sources " + hd + "/" + ids.length);
+            check(hd == ids.length, "HD images of the " + name + " preview loaded: " + hd + "/" + ids.length);
+            results.add(String.format(Locale.ROOT, "map preview %s: %.3f%% of the screen differs from the ImageFrameClient preview", name, differingPercent(ifc, fif)));
+        }
+        setPreviews(context, true);
+        context.setScreen(() -> null);
+        world.getServer().runCommand("gamemode spectator @a");
+        context.waitTicks(10);
+    }
+
+    private static void setPreviews(ClientGameTestContext context, boolean on) {
+        context.runOnClient(client -> {
+            FifConfig.mapPreviews = on;
+            FifConfig.onChanged();
+        });
+    }
+
+    private static byte[] detailPng(int col, int row, int cols, int rows, int size) {
+        BufferedImage image = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
+        for (int x = 0; x < size; x++) {
+            for (int y = 0; y < size; y++) {
+                double u = (col + x / (double) size) / cols;
+                double v = (row + y / (double) size) / rows;
+                double rings = Math.sin(Math.hypot(u - 0.5, v - 0.5) * 220) * 0.5 + 0.5;
+                int r = (int) (u * 255);
+                int g = (int) (rings * 255);
+                int b = (int) (v * 255);
+                image.setRGB(x, y, 0xFF000000 | (r << 16) | (g << 8) | b);
+            }
+        }
+        return encode(image);
     }
 
     private MapId randomMap(ServerLevel level, Random random, boolean transparentHole) {

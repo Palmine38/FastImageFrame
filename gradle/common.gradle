@@ -38,6 +38,10 @@ fabricApi {
     }
 }
 
+tasks.matching { it.name == 'runClientGameTest' }.configureEach {
+    jvmArgs '-Djava.awt.headless=true'
+}
+
 findProperty('extra_mods_dir')?.with { dir ->
     dependencies {
         add(configurations.findByName('modLocalRuntime') ? 'modLocalRuntime' : 'localRuntime', fileTree(dir: dir, include: '*.jar'))

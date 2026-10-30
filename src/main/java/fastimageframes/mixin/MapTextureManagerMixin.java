@@ -3,6 +3,7 @@ package fastimageframes.mixin;
 import fastimageframes.FifConfig;
 import fastimageframes.atlas.MapAtlas;
 import fastimageframes.atlas.MapInstanceData;
+import fastimageframes.render.MapPreviews;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import net.minecraft.client.resources.MapTextureManager;
 import net.minecraft.world.level.saveddata.maps.MapId;
@@ -25,6 +26,7 @@ public class MapTextureManagerMixin {
     @Inject(method = "resetData", at = @At("TAIL"))
     private void fif$clearAtlas(CallbackInfo ci) {
         MapAtlas.INSTANCE.clear();
+        MapPreviews.INSTANCE.clear();
     }
 
     @Inject(method = "getOrCreateMapInstance", at = @At("HEAD"), cancellable = true)

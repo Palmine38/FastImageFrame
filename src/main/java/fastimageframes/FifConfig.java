@@ -4,6 +4,7 @@ import eu.midnightdust.lib.config.MidnightConfig;
 import fastimageframes.atlas.MapAtlas;
 import fastimageframes.hd.HdCache;
 import fastimageframes.hd.HdMaps;
+import fastimageframes.render.MapPreviews;
 
 public class FifConfig extends MidnightConfig {
 
@@ -87,6 +88,9 @@ public class FifConfig extends MidnightConfig {
     public static boolean occlusionCulling = true;
 
     @Entry
+    public static boolean mapPreviews = true;
+
+    @Entry
     public static boolean hdLod = true;
 
     @Entry
@@ -141,6 +145,10 @@ public class FifConfig extends MidnightConfig {
         return enabled && occlusionCulling;
     }
 
+    public static boolean mapPreviewsActive() {
+        return enabled && mapPreviews;
+    }
+
     public static boolean hdActive() {
         return enabled && hdLod;
     }
@@ -155,6 +163,9 @@ public class FifConfig extends MidnightConfig {
         MapAtlas.INSTANCE.onConfigChanged();
         HdMaps.INSTANCE.onConfigChanged();
         HdCache.INSTANCE.onConfigChanged();
+        if (!mapPreviewsActive()) {
+            MapPreviews.INSTANCE.clear();
+        }
     }
 
 }

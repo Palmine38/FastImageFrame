@@ -40,6 +40,10 @@ With [ImageFrame Client](https://modrinth.com/mod/imageframeclient) installed, F
 - **Cache in RAM and on disk**, one folder per server: images show up instantly next time you join, without being
   downloaded again (only when the map still matches).
 - **Smart downloads**: images are requested in the order they appear, a few at a time, refusals are retried.
+- **Map previews in the inventory** (setting, on by default): the previews of maps and combined images in ImageFrame
+  Client tooltips are drawn by Fast ImageFrames, with the HD image when there is one, shrunk smoothly to the exact
+  pixels of your screen instead of a pixelated, shimmering copy, and as one picture for a whole combined image. Maps
+  showing banner or explorer markers keep the ImageFrame Client preview.
 
 ## Measured gains
 

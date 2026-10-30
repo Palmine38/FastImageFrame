@@ -38,4 +38,10 @@ public interface BakeableFrame {
 
     void fif$setProbe(int itemKey, long keySince, long nextProbe, boolean changing, int probed);
 
+    int fif$hiddenGeneration();
+
+    boolean fif$hidden();
+
+    void fif$setHidden(int generation, boolean hidden);
+
 }
