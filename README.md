@@ -1,4 +1,5 @@
 # Fast ImageFrames
+Now available on [Modrinth](https://modrinth.com/mod/fastimageframe)!
 The best mod to pair with [ImageFrame Client mod](https://modrinth.com/mod/imageframeclient), by [LOOHP](https://modrinth.com/user/LOOHP). Also fixes the incompatibility issue between ImageFrame Client and ImmediatelyFast.
 
 DM me here on [Discord](https://discord.com/users/852481562288062504) if you encounter any issues with the mod, or if you have suggestions.
