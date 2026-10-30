@@ -69,4 +69,4 @@ tooltip. English and French.
 
 ## License
 
-LGPL-3.0. Source code: https://github.com/Palmine38/FastImageFrame
+LGPL-3.0.
