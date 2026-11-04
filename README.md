@@ -27,7 +27,8 @@ vanilla screenshots.
 - **Lighter frame model**: the edges between two frames and the back of the frames are not drawn when they can't be
   seen. Resource packs that change the frame (invisible frames...) are respected.
 - **Hidden frames are skipped**: frames behind blocks are not drawn, baked or not, using the game's (or Sodium's)
-  visibility plus a block by block test.
+  visibility plus a block by block test. Since 1.7.3 its time budget (0.4 ms per frame) counts only the time spent
+  testing: it was counted from the start of the frame, so the test often ran out before the frames were reached.
 - **Baked frames leave the entity list** (1.7.2): the game (and Iris, which sorts every entity by type each frame)
   no longer looks at baked frames one by one. With Sodium and Iris, the entity pass of a scene with 1600 baked maps and
   400 changing item frames takes 21% less time with a still camera and 37% less while moving.

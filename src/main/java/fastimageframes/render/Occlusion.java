@@ -40,7 +40,7 @@ public final class Occlusion {
     private static long now;
     private static long pruned;
     private static int budget;
-    private static long deadline;
+    private static long spent;
     private static int generation = 1;
 
     private Occlusion() {
@@ -57,7 +57,7 @@ public final class Occlusion {
         long nanos = System.nanoTime();
         now = nanos / 1000000L;
         budget = TESTS_PER_FRAME;
-        deadline = nanos + NANOS_PER_FRAME;
+        spent = 0L;
         if (!CHANGED.isEmpty() && now - pruned >= PRUNE_MILLIS) {
             pruned = now;
             CHANGED.values().removeIf(time -> now - time >= SETTLE_MILLIS);
@@ -147,7 +147,7 @@ public final class Occlusion {
         if (budget <= 0) {
             return false;
         }
-        if ((budget & 15) == 0 && System.nanoTime() > deadline) {
+        if (spent > NANOS_PER_FRAME) {
             budget = 0;
             return false;
         }
@@ -156,18 +156,22 @@ public final class Occlusion {
     }
 
     private static byte test(double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
+        long start = System.nanoTime();
         BOX[0] = minX;
         BOX[1] = minY;
         BOX[2] = minZ;
         BOX[3] = maxX;
         BOX[4] = maxY;
         BOX[5] = maxZ;
+        byte result = VISIBLE;
         for (int axis = 0; axis < 3; axis++) {
             if (slabs(axis, CELL)) {
-                return HIDDEN;
+                result = HIDDEN;
+                break;
             }
         }
-        return VISIBLE;
+        spent += System.nanoTime() - start;
+        return result;
     }
 
     private static boolean slabs(int d, int[] cell) {
