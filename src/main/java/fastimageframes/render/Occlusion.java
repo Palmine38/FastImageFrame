@@ -8,12 +8,15 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.util.Mth;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.phys.Vec3;
 
 public final class Occlusion {
 
     private static final int MAX_SLABS = 24;
     private static final int MAX_FOOTPRINT = 36;
+    private static final int MAX_SECTION_FOOTPRINT = 256;
     private static final byte VISIBLE = 1;
     private static final byte HIDDEN = 2;
     private static final long SETTLE_MILLIS = 1000L;
@@ -37,6 +40,12 @@ public final class Occlusion {
     private static boolean enabled;
     private static boolean dirty;
     private static boolean unsettled;
+    private static int footprint = MAX_FOOTPRINT;
+    private static LevelChunk chunk;
+    private static int chunkX;
+    private static int chunkZ;
+    private static LevelChunkSection section;
+    private static int sectionIndex;
     private static long now;
     private static long pruned;
     private static int budget;
@@ -60,7 +69,9 @@ public final class Occlusion {
         spent = 0L;
         if (!CHANGED.isEmpty() && now - pruned >= PRUNE_MILLIS) {
             pruned = now;
-            CHANGED.values().removeIf(time -> now - time >= SETTLE_MILLIS);
+            if (CHANGED.values().removeIf(time -> now - time >= SETTLE_MILLIS)) {
+                dirty = true;
+            }
         }
         Vec3 camera = Cameras.position();
         int x = Mth.floor(camera.x);
@@ -123,6 +134,18 @@ public final class Occlusion {
         return !unsettled;
     }
 
+    public static boolean sectionHidden(double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
+        unsettled = false;
+        if (!spend()) {
+            unsettled = true;
+            return false;
+        }
+        footprint = MAX_SECTION_FOOTPRINT;
+        byte result = test(minX, minY, minZ, maxX, maxY, maxZ);
+        footprint = MAX_FOOTPRINT;
+        return result == HIDDEN;
+    }
+
     public static boolean blockHidden(BlockPos pos, double margin) {
         return blockHidden(pos, -margin, -margin, -margin, 1 + margin, 1 + margin, 1 + margin);
     }
@@ -139,7 +162,7 @@ public final class Occlusion {
             return false;
         }
         byte result = test(pos.getX() + minX, pos.getY() + minY, pos.getZ() + minZ, pos.getX() + maxX, pos.getY() + maxY, pos.getZ() + maxZ);
-        BLOCKS.put(key, unsettled ? VISIBLE : generation << 2 | result);
+        BLOCKS.put(key, generation << 2 | (unsettled ? VISIBLE : result));
         return result == HIDDEN;
     }
 
@@ -157,6 +180,8 @@ public final class Occlusion {
 
     private static byte test(double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
         long start = System.nanoTime();
+        chunk = null;
+        section = null;
         BOX[0] = minX;
         BOX[1] = minY;
         BOX[2] = minZ;
@@ -226,7 +251,7 @@ public final class Occlusion {
             int u1 = Mth.floor(uMax + 1.0E-4);
             int v0 = Mth.floor(vMin - 1.0E-4);
             int v1 = Mth.floor(vMax + 1.0E-4);
-            if ((u1 - u0 + 1) * (v1 - v0 + 1) <= MAX_FOOTPRINT && opaque(d, k, u, u0, u1, v, v0, v1)) {
+            if ((u1 - u0 + 1) * (v1 - v0 + 1) <= footprint && opaque(d, k, u, u0, u1, v, v0, v1)) {
                 return true;
             }
             if (k == last) {
@@ -247,11 +272,29 @@ public final class Occlusion {
                     unsettled = true;
                     return false;
                 }
-                if (!level.getBlockState(POS.set(p[0], p[1], p[2])).isSolidRender()) {
+                if (!solid(p[0], p[1], p[2])) {
                     return false;
                 }
             }
         }
         return true;
+    }
+
+    private static boolean solid(int x, int y, int z) {
+        int cx = x >> 4;
+        int cz = z >> 4;
+        if (chunk == null || cx != chunkX || cz != chunkZ) {
+            chunk = level.getChunk(cx, cz);
+            chunkX = cx;
+            chunkZ = cz;
+            sectionIndex = Integer.MIN_VALUE;
+        }
+        int index = chunk.getSectionIndex(y);
+        if (index != sectionIndex) {
+            sectionIndex = index;
+            LevelChunkSection[] sections = chunk.getSections();
+            section = index >= 0 && index < sections.length ? sections[index] : null;
+        }
+        return section != null && !section.hasOnlyAir() && section.getBlockState(x & 15, y & 15, z & 15).isSolidRender();
     }
 }

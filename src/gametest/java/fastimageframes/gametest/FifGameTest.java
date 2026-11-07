@@ -195,6 +195,17 @@ public class FifGameTest implements FabricClientGameTest {
             }
             return;
         }
+        if (System.getenv("FIF_REMOVE_ONLY") != null) {
+            try (TestSingleplayerContext world = context.worldBuilder().create()) {
+                prepareWorld(world);
+                context.waitTicks(200);
+                waitForChunks(world);
+                removeChecks(context, world);
+                logResults();
+                context.waitTicks(100);
+            }
+            return;
+        }
         if (System.getenv("FIF_SCREEN_ONLY") != null) {
             try (TestSingleplayerContext world = context.worldBuilder().create()) {
                 prepareWorld(world);
@@ -281,6 +292,7 @@ public class FifGameTest implements FabricClientGameTest {
             itemWallBenchmark(context, world);
             lightChecks(context, world);
         }
+        removeChecks(context, world);
         occlusionChecks(context, world);
         if (FakeImageFrameServer.available() && IfcLink.isLinked()) {
             hdWallBenchmark(context, world);
@@ -1260,6 +1272,16 @@ public class FifGameTest implements FabricClientGameTest {
             windows.add(context.computeOnClient(client -> BakedFrames.INSTANCE.gpuDraws()) - before);
         }
         check(windows.get(windows.size() - 1) == 0, "baked wall hidden behind blocks is not drawn: GPU draws per 2 s " + windows);
+        int generation = context.computeOnClient(client -> fastimageframes.render.Occlusion.generation());
+        for (int i = 0; i < 40; i++) {
+            context.runOnClient(client -> {
+                BlockPos at = client.player.blockPosition();
+                client.level.setSectionDirtyWithNeighbors(at.getX() >> 4, at.getY() >> 4, at.getZ() >> 4);
+            });
+            context.waitTick();
+        }
+        int lightGenerations = context.computeOnClient(client -> fastimageframes.render.Occlusion.generation()) - generation;
+        check(lightGenerations == 0, "light-only section updates keep the occlusion cache: " + lightGenerations + " resets in 40 ticks");
         setBake(context, false);
         occlusionRounds(context, "1600 maps behind a wall, not baked");
         setBake(context, true);
@@ -1631,6 +1653,113 @@ public class FifGameTest implements FabricClientGameTest {
             }
         }
         setBake(context, true);
+        world.getServer().runOnServer(server -> frames.forEach(ItemFrame::discard));
+        context.waitTicks(20);
+    }
+
+    private void removeChecks(ClientGameTestContext context, TestSingleplayerContext world) {
+        int wallZ = baseZ - 6;
+        boolean items = itemFramesBaked();
+        List<ItemFrame> frames = new ArrayList<>();
+        List<Integer> ids = new ArrayList<>();
+        world.getServer().runOnServer(server -> {
+            ServerLevel level = server.overworld();
+            ItemStack[] samples = itemSamples();
+            Random random = new Random(5);
+            for (int col = 0; col < 16; col++) {
+                boolean map = col % 2 == 0 || !items;
+                BlockPos pos = new BlockPos(baseX + (map ? -8 + col : 40 + col), baseY + 1, wallZ);
+                level.setBlockAndUpdate(pos.north(), Blocks.STONE.defaultBlockState());
+                ItemFrame frame;
+                if (map) {
+                    frame = spawnFrame(level, pos, Direction.SOUTH, randomMap(level, random, false), false);
+                } else {
+                    ItemStack stack = samples[col % samples.length];
+                    frame = spawnItemFrame(level, pos, Direction.SOUTH, stack.isEmpty() ? new ItemStack(Items.APPLE) : stack, false, 0);
+                }
+                frames.add(frame);
+                ids.add(frame.getId());
+            }
+        });
+        world.getServer().runCommand(String.format(Locale.ROOT, "tp @a %.1f %d %.1f 180 0", baseX + 0.5, baseY + 1, wallZ + 6.5));
+        context.waitTicks(80);
+        waitForChunks(world);
+        String[] steps = items ? new String[]{"removed", "replaced", "removed"} : new String[]{"removed", "replaced"};
+        for (String step : steps) {
+            context.waitTicks(150);
+            ItemStack[] before = new ItemStack[ids.size()];
+            int[] signatures = context.computeOnClient(client -> {
+                int[] result = new int[ids.size()];
+                for (int i = 0; i < ids.size(); i++) {
+                    net.minecraft.world.entity.Entity entity = client.level.getEntity(ids.get(i));
+                    result[i] = entity instanceof BakeableFrame frame && frame.fif$isBaked() ? frame.fif$signature() : 0;
+                    before[i] = entity instanceof ItemFrame frame ? frame.getItem().copy() : ItemStack.EMPTY;
+                }
+                return result;
+            });
+            int baked = 0;
+            for (int signature : signatures) {
+                baked += signature != 0 ? 1 : 0;
+            }
+            check(baked >= ids.size() - 1, "frames baked before an item is " + step + ": " + baked + "/" + ids.size());
+            boolean replace = step.equals("replaced");
+            world.getServer().runOnServer(server -> {
+                Random random = new Random(9);
+                for (int i = 0; i < frames.size(); i++) {
+                    ItemFrame frame = frames.get(i);
+                    if (!replace) {
+                        frame.setItem(ItemStack.EMPTY);
+                    } else if (i % 2 == 0 || !items) {
+                        ItemStack map = new ItemStack(Items.FILLED_MAP);
+                        map.set(DataComponents.MAP_ID, randomMap(server.overworld(), random, false));
+                        frame.setItem(map);
+                    } else {
+                        frame.setItem(new ItemStack(i % 4 == 1 ? Items.DIAMOND : Items.GLASS));
+                    }
+                }
+            });
+            int ghosts = 0;
+            int seen = 0;
+            for (int t = 0; t < 12; t++) {
+                context.waitTick();
+                int[] counts = context.computeOnClient(client -> {
+                    int[] result = new int[2];
+                    for (int i = 0; i < ids.size(); i++) {
+                        net.minecraft.world.entity.Entity entity = client.level.getEntity(ids.get(i));
+                        if (!(entity instanceof ItemFrame frame)) {
+                            continue;
+                        }
+                        if (ItemStack.matches(frame.getItem(), before[i])) {
+                            continue;
+                        }
+                        result[0]++;
+                        BakeableFrame bakeable = (BakeableFrame) frame;
+                        if (bakeable.fif$isBaked() && bakeable.fif$signature() == signatures[i] && signatures[i] != 0) {
+                            result[1]++;
+                        }
+                    }
+                    return result;
+                });
+                seen = Math.max(seen, counts[0]);
+                ghosts += counts[1];
+            }
+            check(seen == ids.size(), "client saw every item " + step + ": " + seen + "/" + ids.size());
+            check(ghosts == 0, "no frame keeps its old baked item after the item is " + step + ": " + ghosts + " frame-ticks");
+            if (!replace) {
+                world.getServer().runOnServer(server -> {
+                    Random random = new Random(13);
+                    for (int i = 0; i < frames.size(); i++) {
+                        if (i % 2 == 0 || !items) {
+                            ItemStack map = new ItemStack(Items.FILLED_MAP);
+                            map.set(DataComponents.MAP_ID, randomMap(server.overworld(), random, false));
+                            frames.get(i).setItem(map);
+                        } else {
+                            frames.get(i).setItem(new ItemStack(Items.APPLE));
+                        }
+                    }
+                });
+            }
+        }
         world.getServer().runOnServer(server -> frames.forEach(ItemFrame::discard));
         context.waitTicks(20);
     }

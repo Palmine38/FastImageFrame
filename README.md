@@ -23,12 +23,16 @@ vanilla screenshots.
   a shader pack, baked walls stay in video memory and are drawn straight from there.
 - **Animated images (ImageFrame GIFs)** stay baked while they play: only the texture coordinates are swapped.
 - **Baked item frames** (1.21.4 to 1.21.11): frames holding any item (blocks, tools, enchanted items, banners,
-  shields, compasses, clocks...) are baked too.
+  shields, compasses, clocks...) are baked too. Since 1.8.0 an item taken out of a frame or replaced disappears at
+  once (it stayed visible for up to 3 ticks).
 - **Lighter frame model**: the edges between two frames and the back of the frames are not drawn when they can't be
   seen. Resource packs that change the frame (invisible frames...) are respected.
 - **Hidden frames are skipped**: frames behind blocks are not drawn, baked or not, using the game's (or Sodium's)
   visibility plus a block by block test. Since 1.7.3 its time budget (0.4 ms per frame) counts only the time spent
   testing: it was counted from the start of the frame, so the test often ran out before the frames were reached.
+  Since 1.8.0 light updates no longer make the test start over (on a server the light around the player changes all
+  the time, so it used its whole budget every frame): only block changes count, light does not change which blocks
+  are solid. A section of baked frames now tests its whole box first instead of each frame one by one.
 - **Baked frames leave the entity list** (1.7.2): the game (and Iris, which sorts every entity by type each frame)
   no longer looks at baked frames one by one. With Sodium and Iris, the entity pass of a scene with 1600 baked maps and
   400 changing item frames takes 21% less time with a still camera and 37% less while moving.

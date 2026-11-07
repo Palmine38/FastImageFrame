@@ -4,6 +4,7 @@ package fastimageframes.mixin;
 import fastimageframes.bake.BakedFrames;
 import fastimageframes.render.Occlusion;
 import net.minecraft.client.renderer.extract.LevelExtractor;
+import net.minecraft.core.BlockPos;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -18,9 +19,14 @@ public class LevelExtractorMixin {
         Occlusion.beginFrame();
     }
 
-    @Inject(method = "setSectionDirty(IIIZ)V", at = @At("HEAD"))
-    private void fif$sectionDirty(int x, int y, int z, boolean important, CallbackInfo ci) {
-        Occlusion.blocksChanged(x, y, z);
+    @Inject(method = "setBlockDirty(Lnet/minecraft/core/BlockPos;Z)V", at = @At("HEAD"))
+    private void fif$blockDirty(BlockPos pos, boolean important, CallbackInfo ci) {
+        Occlusion.blocksChanged(pos.getX() - 1, pos.getY() - 1, pos.getZ() - 1, pos.getX() + 1, pos.getY() + 1, pos.getZ() + 1);
+    }
+
+    @Inject(method = "setBlocksDirty(IIIIII)V", at = @At("HEAD"))
+    private void fif$blocksDirty(int minX, int minY, int minZ, int maxX, int maxY, int maxZ, CallbackInfo ci) {
+        Occlusion.blocksChanged(minX, minY, minZ, maxX, maxY, maxZ);
     }
 }
 //#endif

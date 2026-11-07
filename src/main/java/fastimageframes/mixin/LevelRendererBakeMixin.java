@@ -47,11 +47,6 @@ public class LevelRendererBakeMixin {
         return BakedFrames.visibleEntities(entities, frustum);
     }
 
-    @Inject(method = "setSectionDirty(IIIZ)V", at = @At("HEAD"))
-    private void fif$sectionDirty(int x, int y, int z, boolean important, CallbackInfo ci) {
-        Occlusion.blocksChanged(x, y, z);
-    }
-
     @Inject(method = "setBlockDirty(Lnet/minecraft/core/BlockPos;Z)V", at = @At("HEAD"))
     private void fif$blockDirty(BlockPos pos, boolean important, CallbackInfo ci) {
         Occlusion.blocksChanged(pos.getX() - 1, pos.getY() - 1, pos.getZ() - 1, pos.getX() + 1, pos.getY() + 1, pos.getZ() + 1);
@@ -60,11 +55,6 @@ public class LevelRendererBakeMixin {
     @Inject(method = "setBlocksDirty(IIIIII)V", at = @At("HEAD"))
     private void fif$blocksDirty(int minX, int minY, int minZ, int maxX, int maxY, int maxZ, CallbackInfo ci) {
         Occlusion.blocksChanged(minX, minY, minZ, maxX, maxY, maxZ);
-    }
-
-    @Inject(method = "setSectionDirtyWithNeighbors(III)V", at = @At("HEAD"))
-    private void fif$sectionDirtyWithNeighbors(int x, int y, int z, CallbackInfo ci) {
-        Occlusion.blocksChanged((x - 1) << 4, (y - 1) << 4, (z - 1) << 4, (x + 2 << 4) - 1, (y + 2 << 4) - 1, (z + 2 << 4) - 1);
     }
     //#endif
 

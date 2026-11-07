@@ -507,12 +507,22 @@ public final class BakedFrames {
 
     public void onFrameChanged(ItemFrame frame) {
         BakeableFrame bakeable = (BakeableFrame) frame;
-        MapId mapId = frame.getFramedMapId(frame.getItem());
-        int content = ((mapId == null ? -1 : mapId.id()) * 31 + frame.getRotation()) * 31 + (frame.isInvisible() ? 1 : 0);
+        ItemStack stack = frame.getItem();
+        MapId mapId = frame.getFramedMapId(stack);
+        int content = mapId == null ? itemKey(frame, stack) * 31 + 1 : ((mapId.id() * 31 + frame.getRotation()) * 31 + (frame.isInvisible() ? 1 : 0)) * 31;
         if (content == bakeable.fif$content()) {
             return;
         }
         bakeable.fif$setContent(content);
+        if (mapId == null) {
+            if (bakeable.fif$isBaked()) {
+                Section section = sections.get(SectionPos.asLong(frame.blockPosition()));
+                if (section != null) {
+                    markDirty(section);
+                }
+            }
+            return;
+        }
         if (active && frame.level() == level && swap(frame, bakeable)) {
             return;
         }
@@ -761,7 +771,7 @@ public final class BakedFrames {
             return NOT_BAKEABLE;
         }
         BakeableFrame bakeable = (BakeableFrame) frame;
-        int key = itemKey(minecraft, frame, stack);
+        int key = itemKey(frame, stack);
         boolean sameKey = key == bakeable.fif$itemKey() && bakeable.fif$nextProbe() != Long.MIN_VALUE;
         if (sameKey && !bakeable.fif$volatile() && tick - bakeable.fif$keySince() > SETTLE_TICKS && tick < bakeable.fif$nextProbe()) {
             return bakeable.fif$probed();
@@ -781,7 +791,7 @@ public final class BakedFrames {
         return tick + every + (frame.getId() & (every - 1));
     }
 
-    private static int itemKey(Minecraft minecraft, ItemFrame frame, ItemStack stack) {
+    private static int itemKey(ItemFrame frame, ItemStack stack) {
         int key = System.identityHashCode(stack.getItem());
         key = key * 31 + stack.getComponentsPatch().hashCode();
         key = key * 31 + frame.getRotation();
@@ -1064,6 +1074,40 @@ public final class BakedFrames {
         int generation = Occlusion.generation();
         if (section.occlusionGeneration == generation) {
             return section.occluded;
+        }
+        int baked = 0;
+        int minX = 0;
+        int minY = 0;
+        int minZ = 0;
+        int maxX = 0;
+        int maxY = 0;
+        int maxZ = 0;
+        for (ItemFrame frame : section.frames) {
+            if (((BakeableFrame) frame).fif$isBaked()) {
+                BlockPos pos = frame.blockPosition();
+                if (baked++ == 0) {
+                    minX = maxX = pos.getX();
+                    minY = maxY = pos.getY();
+                    minZ = maxZ = pos.getZ();
+                } else {
+                    minX = Math.min(minX, pos.getX());
+                    minY = Math.min(minY, pos.getY());
+                    minZ = Math.min(minZ, pos.getZ());
+                    maxX = Math.max(maxX, pos.getX());
+                    maxY = Math.max(maxY, pos.getY());
+                    maxZ = Math.max(maxZ, pos.getZ());
+                }
+            }
+        }
+        if (baked > 1) {
+            boolean hidden = Occlusion.sectionHidden(minX, minY, minZ, maxX + 1, maxY + 1, maxZ + 1);
+            if (hidden && Occlusion.settled()) {
+                section.occlusionGeneration = generation;
+                section.occluded = true;
+            }
+            if (hidden || !Occlusion.settled()) {
+                return hidden;
+            }
         }
         boolean hidden = true;
         boolean settled = true;
