@@ -90,6 +90,9 @@ public class FifGameTest implements FabricClientGameTest {
         if (FakeImageFrameServer.available()) {
             setImageFrameClientOption(context, "notifyWhenServerSupports", false);
         }
+        if (System.getenv("FIF_CPU_REPLAY") != null) {
+            context.runOnClient(client -> BakedFrames.setGpu(false));
+        }
         String pack = System.getenv("SHADER_PACK");
         if (pack != null) {
             enableShaderPack(context, Path.of(pack));
@@ -148,7 +151,9 @@ public class FifGameTest implements FabricClientGameTest {
                 prepareWorld(world);
                 context.waitTicks(200);
                 waitForChunks(world);
-                visualChecks(context, world);
+                if (!shaders) {
+                    visualChecks(context, world);
+                }
                 gpuAb(context, world);
                 logResults();
                 context.waitTicks(100);
@@ -238,6 +243,10 @@ public class FifGameTest implements FabricClientGameTest {
             try (TestSingleplayerContext world = save.open()) {
                 waitForChunks(world);
                 cacheRejoinChecks(context, world, beforeRejoin[0], beforeRejoin[1], beforeRejoin[2]);
+                if (System.getenv("FIF_CACHE_ONLY") != null) {
+                    logResults();
+                    return;
+                }
                 world.getServer().runCommand(String.format(Locale.ROOT, "tp @a %d %d %d", baseX, baseY, baseZ));
                 context.waitTicks(20);
                 waitForChunks(world);
@@ -447,6 +456,11 @@ public class FifGameTest implements FabricClientGameTest {
         context.waitTicks(100);
         check(FakeImageFrameServer.requests(cacheBig) == 2 && context.computeOnClient(client -> HdCache.INSTANCE.isOnDisk(cacheBig)),
                 "updated HD image cached, no other download");
+        check(context.computeOnClient(client -> fastimageframes.ifc.IfcLink.canRequest()), "server recognized from its HD request channel, without waiting for the handshake");
+        context.runOnClient(client -> HdCache.INSTANCE.endSession(new Object()));
+        context.waitTicks(40);
+        check(context.computeOnClient(client -> HdCache.INSTANCE.isServerSupported() && HdCache.INSTANCE.isOnDisk(cacheBig) && hdShown(cacheBig)),
+                "a late disconnect of an older connection (server transfer) keeps the HD session");
     }
 
     private void cacheRejoinChecks(ClientGameTestContext context, TestSingleplayerContext world, int big, int denied, int acknowledged) {
@@ -539,6 +553,11 @@ public class FifGameTest implements FabricClientGameTest {
         if (!shaders) {
             views = java.util.Arrays.copyOf(views, views.length - 1);
         }
+        String only = System.getenv("FIF_VIEWS");
+        if (only != null) {
+            List<String> names = List.of(only.split(","));
+            views = java.util.Arrays.stream(views).filter(view -> names.contains(view[0])).toArray(String[][]::new);
+        }
         for (String[] view : views) {
             world.getServer().runCommand(view[1]);
             setFif(context, false);
@@ -567,6 +586,19 @@ public class FifGameTest implements FabricClientGameTest {
             }
             check(diff < limit, String.format(Locale.ROOT, "visual %s: %.3f%% pixels differ from vanilla (limit %.2f%%)", view[0], diff, limit));
         }
+        //#if MC >= 1.21.6
+        if (shaders && System.getenv("FIF_CPU_REPLAY") == null) {
+            world.getServer().runCommand(views[0][1]);
+            context.waitTicks(20);
+            int before = context.computeOnClient(client -> BakedFrames.INSTANCE.gpuDraws());
+            int shadowBefore = context.computeOnClient(client -> BakedFrames.INSTANCE.gpuShadowDraws());
+            context.waitTicks(40);
+            int gpuDraws = context.computeOnClient(client -> BakedFrames.INSTANCE.gpuDraws()) - before;
+            int shadowDraws = context.computeOnClient(client -> BakedFrames.INSTANCE.gpuShadowDraws()) - shadowBefore;
+            check(gpuDraws > shadowDraws, "baked frames drawn from the GPU with the shader pack: " + (gpuDraws - shadowDraws) + " draws in 2 s, " + shadowDraws
+                    + " in the shadow pass");
+        }
+        //#endif
         int expected = itemFramesBaked() ? 12 + itemSamples().length - 2 : 12;
         int baked = 0;
         for (int i = 0; i < 20 && baked < expected; i++) {
@@ -1265,6 +1297,9 @@ public class FifGameTest implements FabricClientGameTest {
         occlusionRounds(context, "1600 maps behind a wall, baked    ");
         setOcclusion(context, true);
         context.waitTicks(20);
+        boolean voltum = FabricLoader.getInstance().isModLoaded("voltum");
+        boolean shared = context.computeOnClient(client -> fastimageframes.render.Occlusion.shared());
+        check(shared == voltum, voltum ? "hide behind blocks uses Voltum's test and cache" : "hide behind blocks uses its own test without Voltum");
         List<Integer> windows = new ArrayList<>();
         for (int i = 0; i < 5 && (windows.isEmpty() || windows.get(windows.size() - 1) != 0); i++) {
             int before = context.computeOnClient(client -> BakedFrames.INSTANCE.gpuDraws());
@@ -1596,11 +1631,7 @@ public class FifGameTest implements FabricClientGameTest {
     }
 
     private static boolean itemFramesBaked() {
-        //#if MC >= 26.1
-        return false;
-        //#else
         return true;
-        //#endif
     }
 
     private static ItemStack[] itemSamples() {

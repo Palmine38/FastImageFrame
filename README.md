@@ -19,12 +19,18 @@ vanilla screenshots.
 - **Map atlas**: map textures are packed into a few large textures, so a whole wall of maps is drawn in a handful of
   draw calls instead of one per map.
 - **Baked map walls**: frames that don't change are drawn once and replayed like terrain, instead of being processed
-  one by one every frame. Frames are checked several times per second and rebuilt as soon as something changes. Without
-  a shader pack, baked walls stay in video memory and are drawn straight from there.
+  one by one every frame. Frames are checked several times per second and rebuilt as soon as something changes. Baked
+  walls stay in video memory and are drawn straight from there, since 1.9.0 also with an Iris shader pack on 1.21.6
+  and later (1.21.4 and 1.21.5 copy them each frame under shaders).
+- **Shader packs** (1.9.0): on 1.21.4 to 1.21.8, Iris wraps the render types while a frame is recorded, so walls of
+  maps were never baked with a shader pack; they are now. Baked walls are also drawn from video memory under shaders,
+  shadow pass included. With Complementary Reimagined: on 1.21.6, 1600 maps about 155 FPS before, 375 FPS now; on
+  26.3, 1600 maps 492 to 656 FPS and 400 item frames 303 to 492 FPS (copied each frame vs drawn from video memory).
 - **Animated images (ImageFrame GIFs)** stay baked while they play: only the texture coordinates are swapped.
-- **Baked item frames** (1.21.4 to 1.21.11): frames holding any item (blocks, tools, enchanted items, banners,
-  shields, compasses, clocks...) are baked too. Since 1.8.0 an item taken out of a frame or replaced disappears at
-  once (it stayed visible for up to 3 ticks).
+- **Baked item frames**: frames holding any item (blocks, tools, enchanted items, banners, shields, compasses,
+  clocks...) are baked too. Since 1.8.0 an item taken out of a frame or replaced disappears at once (it stayed visible
+  for up to 3 ticks). Since 1.9.0 also on 26.1 to 26.3, where Minecraft rewrote item rendering: 400 item frames on
+  26.3, 165 FPS vanilla, 1306 FPS baked.
 - **Lighter frame model**: the edges between two frames and the back of the frames are not drawn when they can't be
   seen. Resource packs that change the frame (invisible frames...) are respected.
 - **Hidden frames are skipped**: frames behind blocks are not drawn, baked or not, using the game's (or Sodium's)
@@ -36,6 +42,17 @@ vanilla screenshots.
 - **Baked frames leave the entity list** (1.7.2): the game (and Iris, which sorts every entity by type each frame)
   no longer looks at baked frames one by one. With Sodium and Iris, the entity pass of a scene with 1600 baked maps and
   400 changing item frames takes 21% less time with a still camera and 37% less while moving.
+- **Baking spread over frames** (1.9.0): changed frames used to be baked during the game tick, with no time limit,
+  so the frame that held a tick (the frames that make the 1% lows) also paid for the baking. They are now baked at the
+  start of a frame, within about 2 ms per frame.
+- **Works together with Voltum** (1.9.0): with Voltum 1.7.4 or later, the two mods share one baking budget per frame
+  (about 2 ms in total instead of 2 ms each), and frames use Voltum's hide behind blocks test and its cache: one test
+  budget instead of two, and a block change that does not change which blocks are solid (a redstone clock, a door)
+  no longer makes the frames start their test over. Without Voltum, Fast ImageFrames works as before.
+- **Faster hide behind blocks test** (1.9.0): the test walks the blocks between the camera and a frame, slab by
+  slab. The outline of each slab is now built from four values prepared once per test axis, with two edges per slab
+  instead of eight divisions: same result for every box (checked on 33 million random cases), each test about 1.7
+  times faster. Voltum 1.7.5 has the same change for the shared test.
 - **Glow item frames too**: normal and glow item frames are optimized the same way, and a change of light (torches,
   dynamic lights) does not rebuild anything.
 - **No useless map updates**: the game no longer rebuilds a whole map texture when a packet only moves markers.
@@ -53,6 +70,11 @@ With [ImageFrame Client](https://modrinth.com/mod/imageframeclient) installed, F
 - **Cache in RAM and on disk**, one folder per server: images show up instantly next time you join, without being
   downloaded again (only when the map still matches).
 - **Smart downloads**: images are requested in the order they appear, a few at a time, refusals are retried.
+- **HD after a server transfer** (1.9.0): when a lobby sends you to another server, the game can report the end of
+  the old connection after the new one has started. Fast ImageFrames took it for the end of the new session: no HD
+  image was asked for any more (maps kept their vanilla colors) until you joined again or turned the mod off and on.
+  The end of a connection now only closes the session it opened, and a server is recognized as soon as it declares
+  ImageFrame's HD channel, without waiting for its handshake.
 - **Map previews in the inventory** (setting, on by default): the previews of maps and combined images in ImageFrame
   Client tooltips are drawn by Fast ImageFrames, with the HD image when there is one, shrunk smoothly to the exact
   pixels of your screen instead of a pixelated, shimmering copy, and as one picture for a whole combined image. Maps
@@ -74,6 +96,7 @@ about 800 FPS with Fast ImageFrames.
 
 ## Compatibility
 - Minecraft **1.21.4 to 1.21.11** and **26.1 to 26.3** on Fabric.
+- **Voltum** (heads, signs, banners, armor stands): made to be used together, see above.
 - **Sodium**, **Lithium**, **Iris**, even with shader packs, **ImmediatelyFast**, **Entity Culling**, **FerriteCore**, **ETF**, **EMF**, etc. (it should be compatible with every mod).
 
 ## Known incompatibilities

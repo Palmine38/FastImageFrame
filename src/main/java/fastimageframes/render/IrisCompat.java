@@ -29,9 +29,14 @@ public final class IrisCompat {
     private static MethodHandle entityIds;
     private static Constructor<?> namespacedId;
     private static final Map<EntityType<?>, Object> ENTITY_KEYS = new Reference2ObjectOpenHashMap<>();
+    private static MethodHandle beginEntities;
+    private static MethodHandle endEntities;
+    private static java.lang.reflect.Field renderingLevel;
     //#if MC < 1.21.9
     private static MethodHandle wrapExactlyOnce;
     private static Object entityShard;
+    private static Class<?> wrappable;
+    private static MethodHandle unwrap;
     //#endif
 
     private IrisCompat() {
@@ -53,6 +58,19 @@ public final class IrisCompat {
                 settings = worldSettings.getField("INSTANCE").get(null);
                 entityIds = lookup.unreflect(worldSettings.getMethod("getEntityIds"));
                 namespacedId = Class.forName("net.irisshaders.iris.shaderpack.materialmap.NamespacedId").getConstructor(String.class, String.class);
+                try {
+                    Class<?> programs = Class.forName("net.irisshaders.iris.layer.GbufferPrograms");
+                    beginEntities = lookup.unreflect(programs.getMethod("beginEntities"));
+                    endEntities = lookup.unreflect(programs.getMethod("endEntities"));
+                } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
+                    beginEntities = null;
+                    endEntities = null;
+                }
+                try {
+                    renderingLevel = Class.forName("net.irisshaders.iris.vertices.ImmediateState").getField("isRenderingLevel");
+                } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
+                    renderingLevel = null;
+                }
                 //#if MC >= 1.21.9
                 available = true;
                 //#else
@@ -64,6 +82,12 @@ public final class IrisCompat {
                     }
                 }
                 available = wrapExactlyOnce != null;
+                try {
+                    wrappable = Class.forName("net.irisshaders.batchedentityrendering.impl.WrappableRenderType");
+                    unwrap = lookup.unreflect(wrappable.getMethod("unwrap"));
+                } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
+                    wrappable = null;
+                }
                 //#endif
             } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
                 available = false;
@@ -111,6 +135,43 @@ public final class IrisCompat {
         }
     }
 
+    public static boolean entityPhase() {
+        return available() && beginEntities != null && endEntities != null;
+    }
+
+    public static void beginEntities() {
+        try {
+            beginEntities.invoke();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    public static void endEntities() {
+        try {
+            endEntities.invoke();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    public static boolean beginLevel() {
+        try {
+            if (renderingLevel == null || renderingLevel.getBoolean(null)) {
+                return false;
+            }
+            renderingLevel.setBoolean(null, true);
+            return true;
+        } catch (IllegalAccessException | RuntimeException e) {
+            return false;
+        }
+    }
+
+    public static void endLevel() {
+        try {
+            renderingLevel.setBoolean(null, false);
+        } catch (IllegalAccessException | RuntimeException ignored) {
+        }
+    }
+
     public static int currentBlockEntity() {
         try {
             return (int) currentBlockEntity.invoke(capturedState);
@@ -128,6 +189,16 @@ public final class IrisCompat {
     }
 
     //#if MC < 1.21.9
+    public static RenderType unwrap(RenderType type) {
+        try {
+            while (wrappable != null && wrappable.isInstance(type)) {
+                type = (RenderType) unwrap.invoke(type);
+            }
+        } catch (Throwable ignored) {
+        }
+        return type;
+    }
+
     public static RenderType wrapEntity(RenderType type) {
         try {
             return (RenderType) wrapExactlyOnce.invoke("iris:entity", type, entityShard);

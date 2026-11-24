@@ -52,8 +52,8 @@ public class FastImageFrames implements ClientModInitializer {
         });
         ClientEntityEvents.ENTITY_LOAD.register((entity, level) -> BakedFrames.INSTANCE.onLoad(entity, level));
         ClientEntityEvents.ENTITY_UNLOAD.register((entity, level) -> BakedFrames.INSTANCE.onUnload(entity, level));
-        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> onRenderThread(client, () -> HdCache.INSTANCE.startSession(serverKey(client))));
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> onRenderThread(client, HdCache.INSTANCE::endSession));
+        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> onRenderThread(client, () -> HdCache.INSTANCE.startSession(handler, serverKey(client))));
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> onRenderThread(client, () -> HdCache.INSTANCE.endSession(handler)));
     }
 
     private static void migrate() {

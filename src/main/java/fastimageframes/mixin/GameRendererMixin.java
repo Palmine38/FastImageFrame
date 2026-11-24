@@ -4,6 +4,7 @@ import fastimageframes.FifConfig;
 import fastimageframes.hd.HdLod;
 import fastimageframes.bake.BakedFrames;
 import fastimageframes.render.FifLayers;
+import fastimageframes.render.FrameBudget;
 import fastimageframes.render.FrameNeighbors;
 import fastimageframes.render.OptimizedFrameMesh;
 import net.minecraft.client.renderer.GameRenderer;
@@ -21,6 +22,7 @@ public class GameRendererMixin {
 
     @Inject(method = "render", at = @At("HEAD"))
     private void fif$frameStart(CallbackInfo ci) {
+        FrameBudget.beginFrame();
         FrameNeighbors.onFrameStart();
         BakedFrames.INSTANCE.onFrameStart();
         OptimizedFrameMesh.onFrameStart();

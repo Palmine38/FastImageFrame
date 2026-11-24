@@ -17,6 +17,7 @@ public class LevelExtractorMixin {
     private void fif$beginFrame(CallbackInfo ci) {
         BakedFrames.beginGpuFrame();
         Occlusion.beginFrame();
+        BakedFrames.INSTANCE.bakePending();
     }
 
     @Inject(method = "setBlockDirty(Lnet/minecraft/core/BlockPos;Z)V", at = @At("HEAD"))

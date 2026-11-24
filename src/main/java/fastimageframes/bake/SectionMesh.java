@@ -6,6 +6,8 @@ import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.MeshData;
 import fastimageframes.FastImageFrames;
 import fastimageframes.render.FifLayers;
+import fastimageframes.render.IrisCompat;
+import fastimageframes.render.Shaders;
 import fastimageframes.render.VertexRecorder;
 import it.unimi.dsi.fastutil.objects.Reference2ObjectOpenHashMap;
 import net.minecraft.client.renderer.rendertype.RenderType;
@@ -24,6 +26,7 @@ import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.renderpearl.api.pipeline.IndexType;
 import com.mojang.renderpearl.api.pipeline.RenderPipeline;
+import fastimageframes.render.FogRange;
 import fastimageframes.render.FogShader;
 import net.minecraft.client.renderer.DynamicGpuData;
 import net.minecraft.client.renderer.oit.OitStage;
@@ -40,6 +43,7 @@ import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.ScissorState;
 import com.mojang.blaze3d.textures.GpuTextureView;
+import fastimageframes.render.FogRange;
 import fastimageframes.render.FogShader;
 import net.minecraft.client.renderer.DynamicUniforms;
 import org.joml.Vector3f;
@@ -91,24 +95,29 @@ final class SectionMesh {
 
     static boolean enabled = !Boolean.getBoolean("fastimageframes.cpuReplay");
     static int draws;
+    static int shadowDraws;
+    static boolean insideEntities;
 
     private static final int UPLOAD_BUDGET = 1 << 18;
     private static final ByteBufferBuilder SCRATCH = new ByteBufferBuilder(1 << 20);
-    private static final Reference2ObjectOpenHashMap<RenderType, Batch> BATCHES = new Reference2ObjectOpenHashMap<>();
+    private static final Reference2ObjectOpenHashMap<RenderType, Batch> MAIN_BATCHES = new Reference2ObjectOpenHashMap<>();
+    private static final Reference2ObjectOpenHashMap<RenderType, Batch> SHADOW_BATCHES = new Reference2ObjectOpenHashMap<>();
     private static final Reference2ObjectOpenHashMap<RenderType, Boolean> SUPPORTED = new Reference2ObjectOpenHashMap<>();
-    private static final List<Batch> QUEUED = new ArrayList<>();
+    private static final List<Batch> MAIN = new ArrayList<>();
+    private static final List<Batch> SHADOW = new ArrayList<>();
     private static final List<Runnable> RETIRED = new ArrayList<>();
     //#if MC >= 1.21.6
     private static final Vector4f WHITE = new Vector4f(1.0F, 1.0F, 1.0F, 1.0F);
+    private static final Vector3f NO_OFFSET = new Vector3f();
     //#endif
     private static int budget;
     private static boolean broken;
 
     //#if MC >= 1.21.5
-    private record Part(RenderType type, GpuBuffer vertices, GpuBuffer indices, IndexType indexType, int indexCount, int back) {
+    private record Part(RenderType type, GpuBuffer vertices, GpuBuffer indices, IndexType indexType, int indexCount, int back, int[] ids) {
     }
     //#else
-    private record Part(RenderType type, VertexBuffer buffer, int back) {
+    private record Part(RenderType type, VertexBuffer buffer, int back, int[] ids) {
     }
     //#endif
 
@@ -134,47 +143,82 @@ final class SectionMesh {
     private final Set<RenderType> types = Collections.newSetFromMap(new IdentityHashMap<>());
     private int backs;
     private int version = -1;
+    private boolean iris;
     private double anchorX;
     private double anchorY;
     private double anchorZ;
 
     static boolean usable() {
-        return enabled && !broken;
+        return enabled && !broken && (!Shaders.active() || irisUsable());
+    }
+
+    private static boolean irisUsable() {
+        //#if MC >= 1.21.6
+        return IrisCompat.available() && IrisCompat.entityPhase();
+        //#else
+        return false;
+        //#endif
+    }
+
+    boolean built(int sectionVersion) {
+        return version == sectionVersion && iris == Shaders.active();
     }
 
     static void beginFrame() {
         budget = UPLOAD_BUDGET;
-        for (Batch batch : QUEUED) {
+        for (Batch batch : MAIN) {
             reset(batch);
         }
-        QUEUED.clear();
+        for (Batch batch : SHADOW) {
+            reset(batch);
+        }
+        MAIN.clear();
+        SHADOW.clear();
         release();
     }
 
-    boolean ready(Map<BakedFrames.Layer, VertexRecorder> layers, VertexRecorder[] backRecorders, int sectionVersion, int originX, int originY, int originZ,
-                  Vec3 camera) {
-        boolean built = version == sectionVersion;
+    private static List<Batch> order() {
+        return Shaders.shadowPass() ? SHADOW : MAIN;
+    }
+
+    private static void counted(int count) {
+        draws += count;
+        if (Shaders.shadowPass()) {
+            shadowDraws += count;
+        }
+    }
+
+    boolean ready(Map<BakedFrames.Layer, VertexRecorder> layers, VertexRecorder[] backRecorders, int[] backEntities, int sectionVersion, int originX, int originY,
+                  int originZ, Vec3 camera) {
+        boolean shaders = Shaders.active();
+        boolean built = built(sectionVersion);
         //#if MC >= 1.21.6
-        if (built) {
+        if (built && !shaders) {
             return true;
         }
+        //#else
+        fog();
+        //#endif
         double ax = originX;
         double ay = originY;
         double az = originZ;
-        //#else
-        if (built) {
-            fog();
-            double dx = anchorX - camera.x;
-            double dy = anchorY - camera.y;
-            double dz = anchorZ - camera.z;
-            double shift = FogRange.shift(far(originX, originY, originZ, camera));
-            if (dx * dx + dy * dy + dz * dz <= shift * shift || budget <= 0) {
-                return true;
+        //#if MC >= 1.21.6
+        if (shaders) {
+        //#endif
+            if (built) {
+                double dx = anchorX - camera.x;
+                double dy = anchorY - camera.y;
+                double dz = anchorZ - camera.z;
+                double shift = FogRange.shift(far(originX, originY, originZ, camera));
+                if (dx * dx + dy * dy + dz * dz <= shift * shift || budget <= 0) {
+                    return true;
+                }
             }
+            ax = camera.x;
+            ay = camera.y;
+            az = camera.z;
+        //#if MC >= 1.21.6
         }
-        double ax = camera.x;
-        double ay = camera.y;
-        double az = camera.z;
         //#endif
         int vertices = 0;
         for (VertexRecorder recorder : layers.values()) {
@@ -188,7 +232,7 @@ final class SectionMesh {
         }
         budget -= vertices;
         try {
-            build(layers, backRecorders, ax, ay, az, (float) (originX - ax), (float) (originY - ay), (float) (originZ - az));
+            build(layers, backRecorders, backEntities, shaders, ax, ay, az, (float) (originX - ax), (float) (originY - ay), (float) (originZ - az));
         } catch (RuntimeException e) {
             FastImageFrames.LOGGER.warn("Could not keep baked frames on the GPU, they are copied each frame instead", e);
             broken = true;
@@ -208,6 +252,7 @@ final class SectionMesh {
             FogRange.set(fog.start(), fog.end(), Float.MAX_VALUE, Float.MAX_VALUE);
         }
     }
+    //#endif
 
     private static double far(int originX, int originY, int originZ, Vec3 camera) {
         double fx = Math.max(Math.abs(originX - 1 - camera.x), Math.abs(originX + 17 - camera.x));
@@ -215,30 +260,57 @@ final class SectionMesh {
         double fz = Math.max(Math.abs(originZ - 1 - camera.z), Math.abs(originZ + 17 - camera.z));
         return Math.max(Math.sqrt(fx * fx + fz * fz), fy);
     }
-    //#endif
 
-    private void build(Map<BakedFrames.Layer, VertexRecorder> layers, VertexRecorder[] backRecorders, double ax, double ay, double az, float ox, float oy,
-                       float oz) {
+    private void build(Map<BakedFrames.Layer, VertexRecorder> layers, VertexRecorder[] backRecorders, int[] backEntities, boolean shaders, double ax, double ay,
+                       double az, float ox, float oy, float oz) {
         close();
+        iris = shaders;
         anchorX = ax;
         anchorY = ay;
         anchorZ = az;
-        for (Map.Entry<BakedFrames.Layer, VertexRecorder> layer : layers.entrySet()) {
-            RenderType type = layer.getKey().type();
-            if (supported(type)) {
-                upload(type, layer.getValue(), -1, ox, oy, oz);
-                types.add(type);
+        boolean level = shaders && IrisCompat.beginLevel();
+        try {
+            for (Map.Entry<BakedFrames.Layer, VertexRecorder> layer : layers.entrySet()) {
+                RenderType type = layer.getKey().type();
+                RenderType target = shaders ? target(type) : type;
+                if (supported(target, shaders)) {
+                    int[] ids = shaders ? new int[] {layer.getKey().entity(), layer.getKey().blockEntity(), layer.getKey().item()} : null;
+                    upload(target, layer.getValue(), -1, ids, ox, oy, oz);
+                    types.add(type);
+                }
             }
-        }
-        for (int i = 0; i < backRecorders.length; i++) {
-            if (backRecorders[i] != null && supported(FifLayers.FRAME_LAYER)) {
-                upload(FifLayers.FRAME_LAYER, backRecorders[i], i, ox, oy, oz);
-                backs |= 1 << i;
+            for (int i = 0; i < backRecorders.length; i++) {
+                if (backRecorders[i] != null && supported(FifLayers.FRAME_LAYER, shaders)) {
+                    upload(FifLayers.FRAME_LAYER, backRecorders[i], i, shaders ? new int[] {backEntities[i], 0, 0} : null, ox, oy, oz);
+                    backs |= 1 << i;
+                }
+            }
+        } finally {
+            if (shaders) {
+                IrisCompat.setIds(0, 0, 0);
+            }
+            if (level) {
+                IrisCompat.endLevel();
             }
         }
     }
 
-    private static boolean supported(RenderType type) {
+    private static RenderType target(RenderType type) {
+        //#if MC < 1.21.9
+        return IrisCompat.unwrap(type);
+        //#else
+        return type;
+        //#endif
+    }
+
+    private static boolean supported(RenderType type, boolean shaders) {
+        if (shaders) {
+            //#if MC >= 1.21.6 && MC < 1.21.11
+            return !type.sortOnUpload() && type instanceof RenderType.CompositeRenderType && !type.toString().contains("glint");
+            //#else
+            return !type.sortOnUpload() && !type.toString().contains("glint");
+            //#endif
+        }
         Boolean supported = SUPPORTED.get(type);
         if (supported == null) {
             supported = check(type);
@@ -273,9 +345,12 @@ final class SectionMesh {
         //#endif
     }
 
-    private void upload(RenderType type, VertexRecorder recorder, int back, float ox, float oy, float oz) {
+    private void upload(RenderType type, VertexRecorder recorder, int back, int[] ids, float ox, float oy, float oz) {
         if (recorder.data.isEmpty()) {
             return;
+        }
+        if (ids != null) {
+            IrisCompat.setIds(ids[0], ids[1], ids[2]);
         }
         BufferBuilder builder = builder(type);
         recorder.replay(builder, ox, oy, oz);
@@ -302,7 +377,7 @@ final class SectionMesh {
                 //#endif
                 buffers.add(indices::close);
             }
-            parts.add(new Part(type, vertices, indices, mesh.drawState().indexType(), mesh.drawState().indexCount(), back));
+            parts.add(new Part(type, vertices, indices, mesh.drawState().indexType(), mesh.drawState().indexCount(), back, ids));
         }
         //#else
         VertexBuffer buffer = new VertexBuffer(BufferUsage.STATIC_WRITE);
@@ -310,7 +385,7 @@ final class SectionMesh {
         buffer.bind();
         buffer.upload(mesh);
         VertexBuffer.unbind();
-        parts.add(new Part(type, buffer, back));
+        parts.add(new Part(type, buffer, back, ids));
         //#endif
     }
 
@@ -323,17 +398,25 @@ final class SectionMesh {
     }
 
     void queue(Vec3 camera, int visibleBacks) {
-        Matrix4f pose = new Matrix4f().translation((float) (anchorX - camera.x), (float) (anchorY - camera.y), (float) (anchorZ - camera.z));
+        queue(new Matrix4f().translation((float) (anchorX - camera.x), (float) (anchorY - camera.y), (float) (anchorZ - camera.z)), visibleBacks);
+    }
+
+    void queue(Matrix4f base, float ox, float oy, float oz, int originX, int originY, int originZ, int visibleBacks) {
+        queue(new Matrix4f(base).translate((float) (anchorX - originX) + ox, (float) (anchorY - originY) + oy, (float) (anchorZ - originZ) + oz), visibleBacks);
+    }
+
+    private void queue(Matrix4f pose, int visibleBacks) {
+        boolean shadow = Shaders.shadowPass();
         for (Part part : parts) {
             if (part.back >= 0 && (visibleBacks & 1 << part.back) == 0) {
                 continue;
             }
-            Batch batch = BATCHES.computeIfAbsent(part.type, Batch::new);
+            Batch batch = (shadow ? SHADOW_BATCHES : MAIN_BATCHES).computeIfAbsent(part.type, Batch::new);
             batch.parts.add(part);
             batch.poses.add(pose);
             if (!batch.queued) {
                 batch.queued = true;
-                QUEUED.add(batch);
+                (shadow ? SHADOW : MAIN).add(batch);
             }
         }
     }
@@ -402,12 +485,16 @@ final class SectionMesh {
         return type.hasBlending() && !type.forceSolidModelPhase();
     }
 
+    private static boolean stagePhase(Batch batch) {
+        return batch.parts.get(0).ids == null && translucentPhase(batch.type);
+    }
+
     static void draw() {
     }
 
     static void prepare() {
         try {
-            for (Batch batch : QUEUED) {
+            for (Batch batch : order()) {
                 if (!broken) {
                     prepare(batch);
                 }
@@ -428,11 +515,12 @@ final class SectionMesh {
         }
         Matrix4f textures = type.state.textureTransform.createMatrix();
         int count = batch.parts.size();
+        boolean iris = batch.parts.get(0).ids != null;
         DynamicGpuData.Transform[] transforms = new DynamicGpuData.Transform[count];
         int sequential = 0;
         for (int i = 0; i < count; i++) {
             Matrix4f pose = batch.poses.get(i);
-            transforms[i] = new DynamicGpuData.Transform(new Matrix4f(modelView).mul(pose), WHITE, offset(pose), textures);
+            transforms[i] = new DynamicGpuData.Transform(new Matrix4f(modelView).mul(pose), WHITE, iris ? NO_OFFSET : offset(pose), textures);
             Part part = batch.parts.get(i);
             if (part.indices == null) {
                 sequential = Math.max(sequential, part.indexCount);
@@ -447,12 +535,13 @@ final class SectionMesh {
     }
 
     static void draw(RenderPass pass, boolean sorted, OitStage stage, boolean last) {
-        if (QUEUED.isEmpty()) {
+        List<Batch> queued = order();
+        if (queued.isEmpty()) {
             return;
         }
         try {
-            for (Batch batch : QUEUED) {
-                if (!broken && batch.slices != null && translucentPhase(batch.type) == sorted) {
+            for (Batch batch : queued) {
+                if (!broken && batch.slices != null && stagePhase(batch) == sorted) {
                     draw(pass, batch, stage);
                 }
             }
@@ -461,8 +550,8 @@ final class SectionMesh {
             broken = true;
         } finally {
             if (last || broken) {
-                QUEUED.removeIf(batch -> {
-                    if (broken || translucentPhase(batch.type) == sorted) {
+                queued.removeIf(batch -> {
+                    if (broken || stagePhase(batch) == sorted) {
                         reset(batch);
                         return true;
                     }
@@ -474,11 +563,16 @@ final class SectionMesh {
 
     private static void draw(RenderPass pass, Batch batch, OitStage stage) {
         PreparedRenderType prepared = batch.prepared;
-        RenderPipeline pipeline = FogShader.fog(stage == null ? prepared.pipeline() : prepared.oitPipelineSet().getPipeline(stage));
+        boolean iris = batch.parts.get(0).ids != null;
+        RenderPipeline base = stage == null ? prepared.pipeline() : prepared.oitPipelineSet().getPipeline(stage);
+        RenderPipeline pipeline = iris ? base : FogShader.fog(base);
         if (pipeline == null) {
             return;
         }
         pass.pushDebugGroup(() -> "Fast ImageFrames baked frames");
+        if (iris) {
+            IrisCompat.beginEntities();
+        }
         try {
             pass.setPipeline(RenderSystem.getCompiledPipeline(pipeline));
             if (prepared.scissorState().enabled()) {
@@ -490,6 +584,9 @@ final class SectionMesh {
             }
             for (int i = 0; i < batch.parts.size(); i++) {
                 Part part = batch.parts.get(i);
+                if (part.ids != null) {
+                    IrisCompat.setIds(part.ids[0], part.ids[1], part.ids[2]);
+                }
                 pass.setUniform("DynamicTransforms", batch.slices[i]);
                 pass.setVertexBuffer(0, part.vertices.slice());
                 if (part.indices != null) {
@@ -498,19 +595,24 @@ final class SectionMesh {
                     pass.setIndexBuffer(batch.sequentialBuffer, batch.sequentialType);
                 }
                 pass.drawIndexed(part.indexCount, 1, 0, 0, 0);
-                draws++;
             }
+            counted(batch.parts.size());
         } finally {
+            if (iris) {
+                IrisCompat.setIds(0, 0, 0);
+                IrisCompat.endEntities();
+            }
             pass.popDebugGroup();
         }
     }
     //#else
     static void draw() {
-        if (QUEUED.isEmpty()) {
+        List<Batch> queued = order();
+        if (queued.isEmpty()) {
             return;
         }
         try {
-            for (Batch batch : QUEUED) {
+            for (Batch batch : queued) {
                 if (!broken && !batch.parts.isEmpty()) {
                     draw(batch);
                 }
@@ -519,10 +621,10 @@ final class SectionMesh {
             FastImageFrames.LOGGER.warn("Could not draw baked frames from the GPU, they are copied each frame instead", e);
             broken = true;
         } finally {
-            for (Batch batch : QUEUED) {
+            for (Batch batch : queued) {
                 reset(batch);
             }
-            QUEUED.clear();
+            queued.clear();
         }
     }
     //#endif
@@ -530,9 +632,14 @@ final class SectionMesh {
     //#if MC >= 1.21.6 && MC < 26.3
     private static void draw(Batch batch) {
         RenderType type = batch.type;
-        RenderPipeline pipeline = FogShader.fog(pipeline(type));
+        boolean iris = batch.parts.get(0).ids != null;
+        RenderPipeline pipeline = iris ? pipeline(type) : FogShader.fog(pipeline(type));
         if (pipeline == null) {
             return;
+        }
+        boolean phase = iris && !insideEntities;
+        if (phase) {
+            IrisCompat.beginEntities();
         }
         //#if MC >= 26.2
         PreparedRenderType prepared = type.prepare();
@@ -562,7 +669,7 @@ final class SectionMesh {
             int sequential = 0;
             for (int i = 0; i < count; i++) {
                 Matrix4f pose = batch.poses.get(i);
-                transforms[i] = transform(new Matrix4f(modelView).mul(pose), textures, offset(pose));
+                transforms[i] = transform(new Matrix4f(modelView).mul(pose), textures, iris ? NO_OFFSET : offset(pose));
                 Part part = batch.parts.get(i);
                 if (part.indices == null) {
                     sequential = Math.max(sequential, part.indexCount);
@@ -582,6 +689,7 @@ final class SectionMesh {
             //#elif MC >= 1.21.11
             RenderTarget target = type.state.outputTarget.getRenderTarget();
             ScissorState scissor = RenderSystem.getScissorStateForRenderTypeDraws();
+            Map<String, RenderSetup.TextureAndSampler> bound = type.state.getTextures();
             //#else
             RenderTarget target = ((RenderType.CompositeRenderType) type).state.outputState.getRenderTarget();
             ScissorState scissor = RenderSystem.getScissorStateForRenderTypeDraws();
@@ -601,7 +709,7 @@ final class SectionMesh {
                     pass.bindTexture(texture.name(), texture.textureView(), texture.sampler());
                 }
                 //#elif MC >= 1.21.11
-                for (Map.Entry<String, RenderSetup.TextureAndSampler> texture : type.state.getTextures().entrySet()) {
+                for (Map.Entry<String, RenderSetup.TextureAndSampler> texture : bound.entrySet()) {
                     pass.bindTexture(texture.getKey(), texture.getValue().textureView(), texture.getValue().sampler());
                 }
                 //#else
@@ -614,6 +722,9 @@ final class SectionMesh {
                 //#endif
                 for (int i = 0; i < count; i++) {
                     Part part = batch.parts.get(i);
+                    if (part.ids != null) {
+                        IrisCompat.setIds(part.ids[0], part.ids[1], part.ids[2]);
+                    }
                     pass.setUniform("DynamicTransforms", slices[i]);
                     //#if MC >= 26.2
                     pass.setVertexBuffer(0, part.vertices.slice());
@@ -624,8 +735,8 @@ final class SectionMesh {
                     pass.setIndexBuffer(part.indices != null ? part.indices : sequentialBuffer, part.indices != null ? part.indexType : sequentialType);
                     pass.drawIndexed(0, 0, part.indexCount, 1);
                     //#endif
-                    draws++;
                 }
+                counted(count);
             }
         } finally {
             //#if MC >= 1.21.11 && MC < 26.2
@@ -635,6 +746,12 @@ final class SectionMesh {
             //#elif MC < 1.21.11
             type.clearRenderState();
             //#endif
+            if (iris) {
+                IrisCompat.setIds(0, 0, 0);
+            }
+            if (phase) {
+                IrisCompat.endEntities();
+            }
         }
     }
 
@@ -658,6 +775,11 @@ final class SectionMesh {
     //#elif MC < 1.21.6
     private static void draw(Batch batch) {
         RenderType type = batch.type;
+        boolean iris = batch.parts.get(0).ids != null;
+        boolean phase = iris && !insideEntities;
+        if (phase) {
+            IrisCompat.beginEntities();
+        }
         type.setupRenderState();
         try {
             //#if MC >= 1.21.5
@@ -690,6 +812,9 @@ final class SectionMesh {
                 }
                 for (int i = 0; i < batch.parts.size(); i++) {
                     Part part = batch.parts.get(i);
+                    if (part.ids != null) {
+                        IrisCompat.setIds(part.ids[0], part.ids[1], part.ids[2]);
+                    }
                     stack.pushMatrix();
                     stack.mul(batch.poses.get(i));
                     try {
@@ -699,22 +824,31 @@ final class SectionMesh {
                     } finally {
                         stack.popMatrix();
                     }
-                    draws++;
                 }
+                counted(batch.parts.size());
             }
             //#else
             CompiledShaderProgram shader = RenderSystem.getShader();
             Matrix4f modelView = RenderSystem.getModelViewMatrix();
             for (int i = 0; i < batch.parts.size(); i++) {
                 Part part = batch.parts.get(i);
+                if (part.ids != null) {
+                    IrisCompat.setIds(part.ids[0], part.ids[1], part.ids[2]);
+                }
                 part.buffer.bind();
                 part.buffer.drawWithShader(new Matrix4f(modelView).mul(batch.poses.get(i)), RenderSystem.getProjectionMatrix(), shader);
-                draws++;
             }
+            counted(batch.parts.size());
             VertexBuffer.unbind();
             //#endif
         } finally {
             type.clearRenderState();
+            if (iris) {
+                IrisCompat.setIds(0, 0, 0);
+            }
+            if (phase) {
+                IrisCompat.endEntities();
+            }
         }
     }
     //#endif

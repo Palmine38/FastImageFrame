@@ -3,6 +3,7 @@ package fastimageframes.render;
 import fastimageframes.FifConfig;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
@@ -11,6 +12,10 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.phys.Vec3;
+
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 
 public final class Occlusion {
 
@@ -31,6 +36,7 @@ public final class Occlusion {
     private static final double[] BOX = new double[6];
     private static final int[] CELL = new int[3];
     private static final int[] PROBE = new int[3];
+    private static final double[] INV = new double[4];
     private static final Long2LongOpenHashMap CHANGED = new Long2LongOpenHashMap();
 
     private static ClientLevel level;
@@ -41,6 +47,10 @@ public final class Occlusion {
     private static boolean dirty;
     private static boolean unsettled;
     private static int footprint = MAX_FOOTPRINT;
+    private static double pUMin;
+    private static double pUMax;
+    private static double pVMin;
+    private static double pVMax;
     private static LevelChunk chunk;
     private static int chunkX;
     private static int chunkZ;
@@ -51,13 +61,71 @@ public final class Occlusion {
     private static int budget;
     private static long spent;
     private static int generation = 1;
+    private static boolean shared;
 
     private Occlusion() {
+    }
+
+    private static final class Voltum {
+
+        static final MethodHandle ACTIVE;
+        static final MethodHandle GENERATION;
+        static final MethodHandle SETTLED;
+        static final MethodHandle SECTION_HIDDEN;
+        static final MethodHandle BOX_HIDDEN;
+
+        static {
+            MethodHandle active = null;
+            MethodHandle generation = null;
+            MethodHandle settled = null;
+            MethodHandle sectionHidden = null;
+            MethodHandle boxHidden = null;
+            if (FabricLoader.getInstance().isModLoaded("voltum")) {
+                try {
+                    Class<?> occlusion = Class.forName("voltum.render.Occlusion");
+                    MethodHandles.Lookup lookup = MethodHandles.publicLookup();
+                    MethodType box = MethodType.methodType(boolean.class, double.class, double.class, double.class, double.class, double.class, double.class);
+                    active = lookup.findStatic(occlusion, "active", MethodType.methodType(boolean.class));
+                    generation = lookup.findStatic(occlusion, "generation", MethodType.methodType(int.class));
+                    settled = lookup.findStatic(occlusion, "settled", MethodType.methodType(boolean.class));
+                    sectionHidden = lookup.findStatic(occlusion, "sectionHidden", box);
+                    boxHidden = lookup.findStatic(occlusion, "boxHidden", box);
+                } catch (ReflectiveOperationException | LinkageError e) {
+                    active = null;
+                }
+            }
+            ACTIVE = active;
+            GENERATION = generation;
+            SETTLED = settled;
+            SECTION_HIDDEN = sectionHidden;
+            BOX_HIDDEN = boxHidden;
+        }
+
+        static boolean active() {
+            try {
+                return ACTIVE != null && (boolean) ACTIVE.invokeExact();
+            } catch (Throwable e) {
+                return false;
+            }
+        }
+    }
+
+    public static boolean shared() {
+        return shared;
     }
 
     public static void beginFrame() {
         Minecraft minecraft = Minecraft.getInstance();
         enabled = FifConfig.occlusionActive() && minecraft.level != null;
+        boolean wasShared = shared;
+        shared = enabled && Voltum.active();
+        if (shared) {
+            return;
+        }
+        if (wasShared) {
+            clear();
+            level = null;
+        }
         if (!enabled) {
             clear();
             level = null;
@@ -127,14 +195,35 @@ public final class Occlusion {
     }
 
     public static int generation() {
+        if (shared) {
+            try {
+                return (int) Voltum.GENERATION.invokeExact() + (1 << 30);
+            } catch (Throwable e) {
+                return 0;
+            }
+        }
         return generation;
     }
 
     public static boolean settled() {
+        if (shared) {
+            try {
+                return (boolean) Voltum.SETTLED.invokeExact();
+            } catch (Throwable e) {
+                return false;
+            }
+        }
         return !unsettled;
     }
 
     public static boolean sectionHidden(double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
+        if (shared) {
+            try {
+                return (boolean) Voltum.SECTION_HIDDEN.invokeExact(minX, minY, minZ, maxX, maxY, maxZ);
+            } catch (Throwable e) {
+                return false;
+            }
+        }
         unsettled = false;
         if (!spend()) {
             unsettled = true;
@@ -151,6 +240,14 @@ public final class Occlusion {
     }
 
     public static boolean blockHidden(BlockPos pos, double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
+        if (shared) {
+            try {
+                return (boolean) Voltum.BOX_HIDDEN.invokeExact(pos.getX() + minX, pos.getY() + minY, pos.getZ() + minZ, pos.getX() + maxX, pos.getY() + maxY,
+                        pos.getZ() + maxZ);
+            } catch (Throwable e) {
+                return false;
+            }
+        }
         long key = pos.asLong();
         int cached = BLOCKS.get(key);
         unsettled = false;
@@ -226,39 +323,83 @@ public final class Occlusion {
         }
         int u = (d + 1) % 3;
         int v = (d + 2) % 3;
+        int cu = cell[u];
+        int cv = cell[v];
+        double bu0 = BOX[u];
+        double bu1 = BOX[u + 3];
+        double bv0 = BOX[v];
+        double bv1 = BOX[v + 3];
+        INV[0] = 1.0 / (bMin - cMin);
+        INV[1] = 1.0 / (bMax - cMin);
+        INV[2] = 1.0 / (bMin - cMax);
+        INV[3] = 1.0 / (bMax - cMax);
+        project(first, cMin, cMax, bMin, bMax, cu, cv, bu0, bu1, bv0, bv1);
+        double loUMin = pUMin;
+        double loUMax = pUMax;
+        double loVMin = pVMin;
+        double loVMax = pVMax;
+        project(first + 1, cMin, cMax, bMin, bMax, cu, cv, bu0, bu1, bv0, bv1);
+        double hiUMin = pUMin;
+        double hiUMax = pUMax;
+        double hiVMin = pVMin;
+        double hiVMax = pVMax;
         int count = 0;
         for (int k = first; count < MAX_SLABS; k += step) {
             count++;
-            double uMin = Double.MAX_VALUE;
-            double uMax = -Double.MAX_VALUE;
-            double vMin = Double.MAX_VALUE;
-            double vMax = -Double.MAX_VALUE;
-            for (int plane = k; plane <= k + 1; plane++) {
-                for (int ci = 0; ci < 2; ci++) {
-                    double cd = ci == 0 ? cMin : cMax;
-                    for (int bi = 0; bi < 2; bi++) {
-                        double bd = bi == 0 ? bMin : bMax;
-                        double t = (plane - cd) / (bd - cd);
-                        double s = 1.0 - t;
-                        uMin = Math.min(uMin, s * cell[u] + t * BOX[u]);
-                        uMax = Math.max(uMax, s * (cell[u] + 1) + t * BOX[u + 3]);
-                        vMin = Math.min(vMin, s * cell[v] + t * BOX[v]);
-                        vMax = Math.max(vMax, s * (cell[v] + 1) + t * BOX[v + 3]);
-                    }
-                }
-            }
-            int u0 = Mth.floor(uMin - 1.0E-4);
-            int u1 = Mth.floor(uMax + 1.0E-4);
-            int v0 = Mth.floor(vMin - 1.0E-4);
-            int v1 = Mth.floor(vMax + 1.0E-4);
+            int u0 = Mth.floor(Math.min(loUMin, hiUMin) - 1.0E-4);
+            int u1 = Mth.floor(Math.max(loUMax, hiUMax) + 1.0E-4);
+            int v0 = Mth.floor(Math.min(loVMin, hiVMin) - 1.0E-4);
+            int v1 = Mth.floor(Math.max(loVMax, hiVMax) + 1.0E-4);
             if ((u1 - u0 + 1) * (v1 - v0 + 1) <= footprint && opaque(d, k, u, u0, u1, v, v0, v1)) {
                 return true;
             }
-            if (k == last) {
+            if (k == last || count >= MAX_SLABS) {
                 break;
+            }
+            if (step > 0) {
+                loUMin = hiUMin;
+                loUMax = hiUMax;
+                loVMin = hiVMin;
+                loVMax = hiVMax;
+                project(k + 2, cMin, cMax, bMin, bMax, cu, cv, bu0, bu1, bv0, bv1);
+                hiUMin = pUMin;
+                hiUMax = pUMax;
+                hiVMin = pVMin;
+                hiVMax = pVMax;
+            } else {
+                hiUMin = loUMin;
+                hiUMax = loUMax;
+                hiVMin = loVMin;
+                hiVMax = loVMax;
+                project(k - 1, cMin, cMax, bMin, bMax, cu, cv, bu0, bu1, bv0, bv1);
+                loUMin = pUMin;
+                loUMax = pUMax;
+                loVMin = pVMin;
+                loVMax = pVMax;
             }
         }
         return false;
+    }
+
+    private static void project(int plane, double cMin, double cMax, double bMin, double bMax, int cu, int cv, double bu0, double bu1, double bv0, double bv1) {
+        double t0 = (plane - cMin) * INV[0];
+        double t1 = (plane - cMin) * INV[1];
+        double t2 = (plane - cMax) * INV[2];
+        double t3 = (plane - cMax) * INV[3];
+        double tMin = Math.min(Math.min(t0, t1), Math.min(t2, t3));
+        double tMax = Math.max(Math.max(t0, t1), Math.max(t2, t3));
+        double du0 = bu0 - cu;
+        double du1 = bu1 - (cu + 1);
+        double dv0 = bv0 - cv;
+        double dv1 = bv1 - (cv + 1);
+        double uMin = cu + (du0 < 0 ? tMax : tMin) * du0;
+        double uMax = (cu + 1) + (du1 > 0 ? tMax : tMin) * du1;
+        double vMin = cv + (dv0 < 0 ? tMax : tMin) * dv0;
+        double vMax = (cv + 1) + (dv1 > 0 ? tMax : tMin) * dv1;
+        pUMin = uMin;
+        pUMax = uMax;
+        pVMin = vMin;
+        pVMax = vMax;
     }
 
     private static boolean opaque(int d, int k, int u, int u0, int u1, int v, int v0, int v1) {

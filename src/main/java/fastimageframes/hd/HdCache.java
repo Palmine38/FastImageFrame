@@ -128,7 +128,9 @@ public final class HdCache {
     private final IntOpenHashSet fedToIfc = new IntOpenHashSet();
 
     private String serverKey;
+    private Object session;
     private boolean serverSupported;
+    private boolean channelSupported;
     private boolean active;
     private long tick;
     private long sessionStartTick;
@@ -196,7 +198,7 @@ public final class HdCache {
     }
 
     public void onExtract(int mapId) {
-        if (!active || !(serverSupported || disk.hasRecords())) {
+        if (!active || !(isServerSupported() || disk.hasRecords())) {
             return;
         }
         Entry entry = entries.get(mapId);
@@ -207,9 +209,11 @@ public final class HdCache {
         entry.lastUsedTick = tick;
     }
 
-    public void startSession(String serverKey) {
+    public void startSession(Object session, String serverKey) {
         clearAll();
+        this.session = session;
         this.serverKey = serverKey;
+        this.channelSupported = false;
         this.serverSupported = false;
         this.sessionStartTick = tick;
         if (serverKey != null && FifConfig.hdDiskCache) {
@@ -217,10 +221,15 @@ public final class HdCache {
         }
     }
 
-    public void endSession() {
+    public void endSession(Object session) {
+        if (this.session != null && session != this.session) {
+            return;
+        }
         clearAll();
+        this.session = null;
         this.serverKey = null;
         this.serverSupported = false;
+        this.channelSupported = false;
     }
 
     public void setServerSupported(boolean serverSupported) {
@@ -251,6 +260,7 @@ public final class HdCache {
             clearSent(entry);
             return;
         }
+        serverSupported = true;
         if (multipart.isPresent()) {
             Multipart info = new Multipart(mapId, tick);
             info.put(0, data);
@@ -355,6 +365,7 @@ public final class HdCache {
 
     public void tick() {
         try {
+            channelSupported = session != null && IfcLink.canRequest();
             syncActive();
             syncDiskSession();
             disk.poll();
@@ -420,13 +431,13 @@ public final class HdCache {
                     }
                 }
                 case DENIED -> {
-                    if (recentlyUsed && serverSupported && tick >= entry.retryAtTick) {
+                    if (recentlyUsed && isServerSupported() && tick >= entry.retryAtTick) {
                         queue(entry);
                     }
                 }
                 case DONE -> {
                     if (recentlyUsed) {
-                        if (entry.revalidate && serverSupported) {
+                        if (entry.revalidate && isServerSupported()) {
                             requestCandidates.add(entry);
                         }
                         sendSource(entry);
@@ -462,7 +473,7 @@ public final class HdCache {
                 }
             }
         }
-        if (serverSupported) {
+        if (isServerSupported()) {
             queue(entry);
         }
     }
@@ -498,7 +509,7 @@ public final class HdCache {
     }
 
     private void dispatchRequests() {
-        if (requestCandidates.isEmpty() || !serverSupported || Minecraft.getInstance().getConnection() == null) {
+        if (requestCandidates.isEmpty() || !isServerSupported() || Minecraft.getInstance().getConnection() == null) {
             return;
         }
         int free = FifConfig.hdMaxConcurrentRequests - inFlight;
@@ -650,7 +661,7 @@ public final class HdCache {
     }
 
     public boolean isServerSupported() {
-        return serverSupported;
+        return serverSupported || channelSupported;
     }
 
     public boolean hasPngInRam(int mapId) {

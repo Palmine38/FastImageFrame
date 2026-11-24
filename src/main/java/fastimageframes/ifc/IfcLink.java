@@ -27,6 +27,7 @@ public final class IfcLink {
     private static Method loadedHdMap;
     private static Field useNativeResMapImages;
     private static Constructor<?> hdRequest;
+    private static CustomPacketPayload.Type<CustomPacketPayload> requestType;
     private static Constructor<?> responseConstructor;
     private static ClientPlayNetworking.PlayPayloadHandler<CustomPacketPayload> ifcResponseHandler;
 
@@ -58,6 +59,7 @@ public final class IfcLink {
 
             Class<?> request = Class.forName(PAYLOADS + "ServerboundHdImageRequest");
             hdRequest = request.getConstructor(int.class);
+            requestType = type(request);
 
             Class<?> response = Class.forName(PAYLOADS + "ClientboundHdImageResponse");
             responseMapId = response.getMethod("mapId");
@@ -130,6 +132,14 @@ public final class IfcLink {
             return useNativeResMapImages.getBoolean(null);
         } catch (IllegalAccessException e) {
             return true;
+        }
+    }
+
+    public static boolean canRequest() {
+        try {
+            return linked && Minecraft.getInstance().getConnection() != null && ClientPlayNetworking.canSend(requestType);
+        } catch (RuntimeException e) {
+            return false;
         }
     }
 

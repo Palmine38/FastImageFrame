@@ -39,6 +39,7 @@ public class LevelRendererBakeMixin {
     //#endif
     private void fif$beginOcclusion(CallbackInfo ci) {
         Occlusion.beginFrame();
+        BakedFrames.INSTANCE.bakePending();
     }
 
     @ModifyExpressionValue(method = {"collectVisibleEntities", "extractVisibleEntities"}, require = 0,

@@ -9,6 +9,7 @@ import fastimageframes.atlas.MapAtlas;
 import fastimageframes.hd.HdLod;
 import fastimageframes.hd.HdMaps;
 import fastimageframes.render.Cameras;
+import fastimageframes.render.FrameBudget;
 import fastimageframes.render.IrisCompat;
 import fastimageframes.render.Occlusion;
 import fastimageframes.render.Shaders;
@@ -69,6 +70,37 @@ import net.minecraft.client.renderer.state.level.CameraRenderState;
 //#elif MC >= 1.21.9
 import net.minecraft.client.renderer.state.CameraRenderState;
 //#endif
+//#if MC >= 26.1
+import com.mojang.blaze3d.vertex.QuadInstance;
+import com.mojang.math.MatrixUtil;
+import net.minecraft.client.model.Model;
+import net.minecraft.client.model.geom.ModelPart;
+import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart;
+import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
+import net.minecraft.client.renderer.item.ItemStackRenderState;
+import net.minecraft.client.resources.model.geometry.BakedQuad;
+import net.minecraft.world.item.ItemDisplayContext;
+import net.minecraft.util.ARGB;
+import net.fabricmc.fabric.api.client.renderer.v1.mesh.MeshView;
+import net.fabricmc.fabric.api.client.renderer.v1.mesh.QuadView;
+import org.joml.Vector3f;
+import java.util.function.Function;
+//#endif
+//#if MC >= 26.1 && MC < 26.3
+import com.mojang.blaze3d.vertex.SheetedDecalTextureGenerator;
+import net.minecraft.client.renderer.texture.TextureAtlasSprite;
+//#endif
+//#if MC >= 26.1 && MC < 26.2
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.feature.ItemFeatureRenderer;
+//#endif
+//#if MC >= 26.2 && MC < 26.3
+import net.minecraft.client.renderer.rendertype.OutputTarget;
+//#endif
+//#if MC >= 26.3
+import net.minecraft.client.renderer.texture.UvMapping;
+import net.minecraft.client.resources.model.geometry.ItemQuads;
+//#endif
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
@@ -86,6 +118,7 @@ public final class BakedFrames {
     public static final int NOT_BAKEABLE = 0;
     private static final int CHECK_GROUPS = 4;
     private static final int BAKE_BUDGET_PER_TICK = 1024;
+    private static final long BAKE_NANOS = 2000000L;
     private static final Direction[] DIRECTIONS = Direction.values();
     private static final MethodHandle HEAD_ATLAS_GENERATION = headAtlasGenerationHandle();
     private static final int GLOW_ITEM_LIGHT = 0xF000F0;
@@ -445,6 +478,11 @@ public final class BakedFrames {
         return SectionMesh.draws;
     }
 
+    public int gpuShadowDraws() {
+        return SectionMesh.shadowDraws;
+    }
+
+
     public int strandedFrames() {
         int count = 0;
         for (Section section : sections.values()) {
@@ -614,19 +652,7 @@ public final class BakedFrames {
                     continue;
                 }
                 BakeableFrame bakeable = (BakeableFrame) frame;
-                int signature = check(minecraft, frame, camera);
-                if (signature != bakeable.fif$signature()) {
-                    if (bakeable.fif$isBaked()) {
-                        count(6);
-                    }
-                    if (signature != NOT_BAKEABLE && bakeable.fif$signature() != NOT_BAKEABLE && bakeable.fif$slot() == null) {
-                        long last = bakeable.fif$changedTick();
-                        boolean animated = tick - last <= ANIMATION_WINDOW_TICKS;
-                        bakeable.fif$setChanged(tick, animated ? tick + ANIMATION_HOLD_TICKS : bakeable.fif$animatedUntil());
-                    }
-                    bakeable.fif$setSignature(signature);
-                    markDirty(section);
-                }
+                checkFrame(minecraft, section, frame, camera);
                 if (bakeable.fif$isBaked() && !section.dirty) {
                     relight(minecraft, section, frame);
                 }
@@ -643,22 +669,55 @@ public final class BakedFrames {
                 java.util.Arrays.fill(reasons, 0);
             }
         }
+    }
+
+    private void checkFrame(Minecraft minecraft, Section section, ItemFrame frame, Vec3 camera) {
+        BakeableFrame bakeable = (BakeableFrame) frame;
+        int signature = check(minecraft, frame, camera);
+        if (signature != bakeable.fif$signature()) {
+            if (bakeable.fif$isBaked()) {
+                count(6);
+            }
+            if (signature != NOT_BAKEABLE && bakeable.fif$signature() != NOT_BAKEABLE && bakeable.fif$slot() == null) {
+                long last = bakeable.fif$changedTick();
+                boolean animated = tick - last <= ANIMATION_WINDOW_TICKS;
+                bakeable.fif$setChanged(tick, animated ? tick + ANIMATION_HOLD_TICKS : bakeable.fif$animatedUntil());
+            }
+            bakeable.fif$setSignature(signature);
+            markDirty(section);
+        }
+    }
+
+    public void bakePending() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (!active || minecraft.level != level || minecraft.getEntityRenderDispatcher().camera == null) {
+            return;
+        }
         rebuild.clear();
         for (Section section : sections.values()) {
             if (section.dirty) {
                 rebuild.add(section);
             }
         }
-        if (minecraft.getEntityRenderDispatcher().camera == null) {
+        if (rebuild.isEmpty()) {
             return;
         }
+        long now = System.nanoTime();
+        long shared = FrameBudget.deadline();
+        long deadline = shared > now - BAKE_NANOS ? Math.min(shared, now + BAKE_NANOS) : now + BAKE_NANOS;
+        Vec3 camera = Cameras.position();
         int budget = BAKE_BUDGET_PER_TICK;
+        boolean progressed = false;
         for (Section section : rebuild) {
-            if (budget <= 0) {
+            if (budget <= 0 || progressed && System.nanoTime() > deadline) {
                 break;
             }
             budget -= section.frames.size();
+            for (int i = 0; i < section.frames.size(); i++) {
+                checkFrame(minecraft, section, section.frames.get(i), camera);
+            }
             bake(minecraft, section, camera);
+            progressed = true;
         }
     }
 
@@ -840,14 +899,15 @@ public final class BakedFrames {
     }
 
     private static boolean itemFramesSupported() {
-        //#if MC >= 26.1
-        return false;
-        //#else
         return true;
-        //#endif
     }
 
     private VertexRecorder layerFor(RenderType type) {
+        //#if MC < 1.21.9
+        if (shaders) {
+            type = IrisCompat.unwrap(type);
+        }
+        //#endif
         if (probing) {
             probeTypes = probeTypes * 31 + System.identityHashCode(type);
             return probes.computeIfAbsent(type, t -> new VertexRecorder());
@@ -1175,13 +1235,24 @@ public final class BakedFrames {
         VertexRecorder layer = layerFor(type);
         return layer != null ? layer : DISCARD;
     };
+    //#endif
 
     private static final VertexRecorder DISCARD = new VertexRecorder();
-    //#endif
+
+    private VertexConsumer buffer(RenderType type) {
+        VertexRecorder layer = layerFor(type);
+        return layer != null ? layer : DISCARD;
+    }
 
     @SuppressWarnings("unchecked")
     private InvocationHandler recordingHandler() {
-        return (proxy, method, args) -> switch (method.getName()) {
+        return (proxy, method, args) -> {
+            //#if MC >= 26.1
+            if (method.isDefault() && !method.getName().equals("submitBlockModel")) {
+                return InvocationHandler.invokeDefault(proxy, method, args);
+            }
+            //#endif
+            return switch (method.getName()) {
             case "order" -> proxy;
             case "submitCustomGeometry" -> {
                 VertexRecorder recorder = layerFor((RenderType) args[1]);
@@ -1250,6 +1321,55 @@ public final class BakedFrames {
                 yield null;
             }
             //#endif
+            //#if MC >= 26.1
+            case "submitItem" -> {
+                recordItem(((PoseStack) args[0]).last(), (ItemDisplayContext) args[1], (int) args[2], (int) args[3], (int[]) args[5], args[6],
+                        (ItemStackRenderState.FoilType) args[7]);
+                yield null;
+            }
+            case "submitModel" -> {
+                Model model = (Model) args[0];
+                model.setupAnim(args[1]);
+                VertexConsumer consumer = buffer((RenderType) args[3]);
+                //#if MC >= 26.3
+                if (args[7] instanceof UvMapping uv) {
+                    consumer = uv.wrap(consumer);
+                }
+                //#else
+                if (args[7] instanceof TextureAtlasSprite sprite) {
+                    consumer = sprite.wrap(consumer);
+                }
+                //#endif
+                model.renderToBuffer((PoseStack) args[2], consumer, (int) args[4], (int) args[5], (int) args[6]);
+                yield null;
+            }
+            //#if MC < 26.2
+            case "submitModelPart" -> {
+                RenderType type = (RenderType) args[2];
+                TextureAtlasSprite sprite = (TextureAtlasSprite) args[5];
+                MultiBufferSource buffers = this::buffer;
+                VertexConsumer consumer = (boolean) args[7] ? ItemFeatureRenderer.getFoilBuffer(buffers, type, (boolean) args[6], true) : buffer(type);
+                if (sprite != null) {
+                    consumer = sprite.wrap(consumer);
+                }
+                ((ModelPart) args[0]).render((PoseStack) args[1], consumer, (int) args[3], (int) args[4], (int) args[8]);
+                yield null;
+            }
+            //#endif
+            case "submitBlockModel" -> {
+                if (args.length == 9) {
+                    recordBlockModel(((PoseStack) args[0]).last(), (Function<ChunkSectionLayer, RenderType>) args[1], (List<BlockStateModelPart>) args[3],
+                            (MeshView) args[4], (int[]) args[5], (int) args[6], (int) args[7]);
+                } else if (args.length == 7) {
+                    recordBlockModel(((PoseStack) args[0]).last(), layer -> (RenderType) args[1], (List<BlockStateModelPart>) args[2], null, (int[]) args[3],
+                            (int) args[4], (int) args[5]);
+                } else {
+                    rejected = true;
+                    lastRejection = method.toString();
+                }
+                yield null;
+            }
+            //#endif
             case "hashCode" -> System.identityHashCode(proxy);
             case "equals" -> proxy == args[0];
             case "toString" -> "Fast ImageFrames bake collector";
@@ -1258,8 +1378,135 @@ public final class BakedFrames {
                 lastRejection = method.toString();
                 yield defaultValue(method.getReturnType());
             }
+            };
         };
     }
+
+    //#if MC >= 26.1
+    @SuppressWarnings("unchecked")
+    private void recordItem(PoseStack.Pose pose, ItemDisplayContext context, int light, int overlay, int[] tints, Object quadList,
+                            ItemStackRenderState.FoilType foil) {
+        QuadInstance instance = new QuadInstance();
+        instance.setLightCoords(light);
+        instance.setOverlayCoords(overlay);
+        PoseStack.Pose decal = null;
+        if (foil == ItemStackRenderState.FoilType.SPECIAL) {
+            decal = pose.copy();
+            if (context == ItemDisplayContext.GUI) {
+                MatrixUtil.mulComponentWise(decal.pose(), 0.5F);
+            } else if (context.firstPerson()) {
+                MatrixUtil.mulComponentWise(decal.pose(), 0.75F);
+            }
+        }
+        //#if MC >= 26.3
+        for (BakedQuad quad : ((ItemQuads) quadList).all()) {
+            BakedQuad.MaterialInfo material = quad.materialInfo();
+            RenderType type = switch (foil) {
+                case NONE -> material.itemRenderType();
+                case STANDARD -> material.itemGlintRenderType();
+                case SPECIAL -> material.itemGlintSpecialRenderType();
+            };
+            instance.setColor(tint(tints, material));
+            if (foil == ItemStackRenderState.FoilType.SPECIAL) {
+                buffer(type).putBakedQuadWithGlint(pose, quad, instance, decal);
+            } else {
+                buffer(type).putBakedQuad(pose, quad, instance);
+            }
+        }
+        //#elif MC >= 26.2
+        List<BakedQuad> quads = (List<BakedQuad>) quadList;
+        for (BakedQuad quad : quads) {
+            BakedQuad.MaterialInfo material = quad.materialInfo();
+            instance.setColor(tint(tints, material));
+            buffer(material.itemRenderType()).putBakedQuad(pose, quad, instance);
+        }
+        if (foil != ItemStackRenderState.FoilType.NONE) {
+            for (BakedQuad quad : quads) {
+                RenderType type = quad.materialInfo().itemRenderType();
+                boolean translucent = Minecraft.getInstance().gameRenderer.gameRenderState().useShaderTransparency() && type.outputTarget() == OutputTarget.ITEM_ENTITY_TARGET;
+                VertexConsumer consumer = buffer(translucent ? RenderTypes.glintTranslucent() : RenderTypes.glint());
+                if (decal != null) {
+                    consumer = new SheetedDecalTextureGenerator(consumer, decal, 0.0078125F);
+                }
+                consumer.putBakedQuad(pose, quad, instance);
+            }
+        }
+        //#else
+        for (BakedQuad quad : (List<BakedQuad>) quadList) {
+            BakedQuad.MaterialInfo material = quad.materialInfo();
+            RenderType type = material.itemRenderType();
+            instance.setColor(tint(tints, material));
+            if (foil != ItemStackRenderState.FoilType.NONE) {
+                VertexConsumer consumer = buffer(ItemFeatureRenderer.getFoilRenderType(type, true));
+                if (decal != null) {
+                    consumer = new SheetedDecalTextureGenerator(consumer, decal, 0.0078125F);
+                }
+                consumer.putBakedQuad(pose, quad, instance);
+            }
+            buffer(type).putBakedQuad(pose, quad, instance);
+        }
+        //#endif
+    }
+
+    private void recordBlockModel(PoseStack.Pose pose, Function<ChunkSectionLayer, RenderType> types, List<BlockStateModelPart> parts, MeshView mesh, int[] tints,
+                                  int light, int overlay) {
+        QuadInstance instance = new QuadInstance();
+        instance.setLightCoords(light);
+        instance.setOverlayCoords(overlay);
+        for (BlockStateModelPart part : parts) {
+            for (Direction direction : DIRECTIONS) {
+                for (BakedQuad quad : part.getQuads(direction)) {
+                    recordQuad(pose, types, quad, instance, tints);
+                }
+            }
+            for (BakedQuad quad : part.getQuads(null)) {
+                recordQuad(pose, types, quad, instance, tints);
+            }
+        }
+        if (mesh != null) {
+            Vector3f position = new Vector3f();
+            Vector3f normal = new Vector3f();
+            mesh.forEach(quad -> recordQuad(pose, types, quad, tints, light, overlay, position, normal));
+        }
+    }
+
+    private void recordQuad(PoseStack.Pose pose, Function<ChunkSectionLayer, RenderType> types, QuadView quad, int[] tints, int light, int overlay, Vector3f position,
+                            Vector3f normal) {
+        RenderType type = types.apply(quad.chunkLayer());
+        if (type == null) {
+            return;
+        }
+        VertexConsumer consumer = buffer(type);
+        int layer = quad.tintIndex();
+        int tint = layer >= 0 && layer < tints.length ? tints[layer] : -1;
+        for (int i = 0; i < 4; i++) {
+            pose.pose().transformPosition(quad.x(i), quad.y(i), quad.z(i), position);
+            if (quad.hasNormal(i)) {
+                quad.copyNormal(i, normal);
+            } else {
+                normal.set(quad.faceNormal());
+            }
+            pose.transformNormal(normal, normal);
+            int lightmap = quad.lightmap(i);
+            int coords = quad.emissive() ? 0xF000F0 : Math.max(lightmap & 0xFFFF, light & 0xFFFF) | Math.max(lightmap >>> 16, light >>> 16) << 16;
+            consumer.addVertex(position.x(), position.y(), position.z(), ARGB.multiply(quad.color(i), tint), quad.u(i), quad.v(i), overlay, coords, normal.x(), normal.y(),
+                    normal.z());
+        }
+    }
+
+    private void recordQuad(PoseStack.Pose pose, Function<ChunkSectionLayer, RenderType> types, BakedQuad quad, QuadInstance instance, int[] tints) {
+        RenderType type = types.apply(quad.materialInfo().layer());
+        if (type != null) {
+            instance.setColor(tint(tints, quad.materialInfo()));
+            buffer(type).putBakedQuad(pose, quad, instance);
+        }
+    }
+
+    private static int tint(int[] tints, BakedQuad.MaterialInfo material) {
+        int layer = material.tintIndex();
+        return material.isTinted() && layer >= 0 && layer < tints.length ? tints[layer] : -1;
+    }
+    //#endif
 
     private static Object defaultValue(Class<?> type) {
         if (type == boolean.class) {
@@ -1295,7 +1542,7 @@ public final class BakedFrames {
         Frustum frustum = this.frustum;
         SectionCulling.begin(camera);
         Matrix4fc base = poseStack.last().pose();
-        boolean gpu = !shaders && SectionMesh.usable() && (base.properties() & Matrix4fc.PROPERTY_TRANSLATION) != 0;
+        boolean gpu = SectionMesh.usable() && (base.properties() & Matrix4fc.PROPERTY_TRANSLATION) != 0;
         Vec3 placed = camera.subtract(base.m30(), base.m31(), base.m32());
         for (Section section : sections.values()) {
             if (!section.hasData || section.dirty || frustum != null && !frustum.isVisible(section.bounds)
@@ -1349,6 +1596,25 @@ public final class BakedFrames {
     public static void drawGpu(com.mojang.renderpearl.api.commands.RenderPass pass, boolean sorted, net.minecraft.client.renderer.oit.OitStage stage, boolean last) {
         SectionMesh.draw(pass, sorted, stage, last);
     }
+
+    public static void prepareShadow() {
+        if (Shaders.shadowPass()) {
+            SectionMesh.prepare();
+        }
+    }
+
+    public static void drawShadow(com.mojang.renderpearl.api.commands.RenderPass pass) {
+        if (Shaders.shadowPass()) {
+            SectionMesh.draw(pass, false, null, false);
+            SectionMesh.draw(pass, true, null, true);
+        }
+    }
+    //#else
+    public static void drawShadow() {
+        if (Shaders.shadowPass()) {
+            SectionMesh.draw();
+        }
+    }
     //#endif
 
     public static final class BakedFrameState extends EntityRenderState {
@@ -1376,21 +1642,30 @@ public final class BakedFrames {
         float ox = (float) (section.originX - (state.x - x));
         float oy = (float) (section.originY - (state.y - y));
         float oz = (float) (section.originZ - (state.z - z));
+        SectionMesh mesh = SectionMesh.usable() && section.mesh != null && section.mesh.built(section.version) ? section.mesh : null;
         for (Map.Entry<Layer, VertexRecorder> layer : section.layers.entrySet()) {
             VertexRecorder recorder = layer.getValue();
-            if (!recorder.data.isEmpty()) {
+            if (!recorder.data.isEmpty() && (mesh == null || !mesh.has(layer.getKey().type()))) {
                 ids(layer.getKey());
                 out.submitCustomGeometry(poseStack, layer.getKey().type(), (pose, consumer) -> recorder.replay(consumer, pose.pose(), pose.normal(), ox, oy, oz));
             }
         }
+        int backs = 0;
         for (int i = 0; i < 12; i++) {
             VertexRecorder recorder = section.backs[i];
             if (recorder != null && !recorder.data.isEmpty()) {
+                if (mesh != null && mesh.hasBack(i)) {
+                    backs |= 1 << i;
+                    continue;
+                }
                 backIds(section, i);
                 out.submitCustomGeometry(poseStack, FifLayers.FRAME_LAYER, (pose, consumer) -> recorder.replay(consumer, pose.pose(), pose.normal(), ox, oy, oz));
             }
         }
         clearIds();
+        if (mesh != null) {
+            mesh.queue(poseStack.last().pose(), ox, oy, oz, section.originX, section.originY, section.originZ, backs);
+        }
     }
     //#else
     private final MultiBufferSource recorder = type -> {
@@ -1412,7 +1687,7 @@ public final class BakedFrames {
         }
         Frustum frustum = this.frustum;
         SectionCulling.begin(camera);
-        boolean gpu = !shaders && SectionMesh.usable();
+        boolean gpu = SectionMesh.usable();
         for (Section section : sections.values()) {
             if (!section.hasData || section.dirty || frustum != null && !frustum.isVisible(section.bounds)
                     || !SectionCulling.isVisible(section.key, section.originX, section.originY, section.originZ) || occluded(section)) {
@@ -1463,20 +1738,35 @@ public final class BakedFrames {
         float oy = (float) (section.originY - (entity.getY() - y));
         float oz = (float) (section.originZ - (entity.getZ() - z));
         PoseStack.Pose pose = poseStack.last();
+        SectionMesh mesh = SectionMesh.usable() && section.mesh != null && section.mesh.built(section.version) ? section.mesh : null;
         for (Map.Entry<Layer, VertexRecorder> layer : section.layers.entrySet()) {
-            if (!layer.getValue().data.isEmpty()) {
+            if (!layer.getValue().data.isEmpty() && (mesh == null || !mesh.has(layer.getKey().type()))) {
                 ids(layer.getKey());
                 layer.getValue().replay(buffers.getBuffer(type(layer.getKey().type())), pose.pose(), pose.normal(), ox, oy, oz);
             }
         }
+        int backs = 0;
         for (int i = 0; i < 12; i++) {
             VertexRecorder recorder = section.backs[i];
             if (recorder != null && !recorder.data.isEmpty()) {
+                if (mesh != null && mesh.hasBack(i)) {
+                    backs |= 1 << i;
+                    continue;
+                }
                 backIds(section, i);
                 recorder.replay(buffers.getBuffer(type(FifLayers.FRAME_LAYER)), pose.pose(), pose.normal(), ox, oy, oz);
             }
         }
         clearIds();
+        if (mesh != null) {
+            mesh.queue(pose.pose(), ox, oy, oz, section.originX, section.originY, section.originZ, backs);
+            SectionMesh.insideEntities = true;
+            try {
+                SectionMesh.draw();
+            } finally {
+                SectionMesh.insideEntities = false;
+            }
+        }
         return true;
     }
     //#endif
@@ -1485,7 +1775,8 @@ public final class BakedFrames {
         if (section.mesh == null) {
             section.mesh = new SectionMesh();
         }
-        return section.mesh.ready(section.layers, section.backs, section.version, section.originX, section.originY, section.originZ, camera) ? section.mesh : null;
+        return section.mesh.ready(section.layers, section.backs, section.backEntities, section.version, section.originX, section.originY, section.originZ, camera)
+                ? section.mesh : null;
     }
 
     private void ids(Layer layer) {

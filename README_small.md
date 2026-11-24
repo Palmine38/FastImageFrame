@@ -18,10 +18,10 @@ vanilla screenshots.
 - **Map atlas**: map textures are packed into a few large textures, so a whole wall of maps is drawn in a handful of
   draw calls instead of one per map.
 - **Baked map walls**: frames that don't change are drawn once and replayed like terrain, instead of being processed
-  one by one every frame. Frames are checked several times per second and rebuilt as soon as something changes. Without
-  a shader pack, baked walls stay in video memory and are drawn straight from there.
+  one by one every frame. Frames are checked several times per second and rebuilt as soon as something changes. Baked
+  walls stay in video memory and are drawn straight from there, with or without a shader pack (on 1.21.6 and later).
 - **Animated images (ImageFrame GIFs)** stay baked while they play: only the texture coordinates are swapped.
-- **Baked item frames** (1.21.4 to 1.21.11): frames holding any item (blocks, tools, enchanted items, banners,
+- **Baked item frames**: frames holding any item (blocks, tools, enchanted items, banners,
   shields, compasses, clocks...) are baked too.
 - **Lighter frame model**: the edges between two frames and the back of the frames are not drawn when they can't be
   seen. Resource packs that change the frame (invisible frames...) are respected.

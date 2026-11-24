@@ -26,11 +26,15 @@
     "GameRendererMixin",
     "LevelRendererBakeMixin",
 //#if MC >= 1.21.6
+    "FogRendererMixin",
     "ShaderCompilationCacheMixin",
 //#endif
 //#if MC >= 26.2
     "LevelExtractorMixin",
     "FeatureRenderDispatcherMixin",
+//#endif
+//#if MC >= 1.21.9
+    "FeatureRenderDispatcherShadowMixin",
 //#endif
     "EntityRenderDispatcherMixin",
     "ItemFrameMixin",
