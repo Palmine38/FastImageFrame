@@ -45,14 +45,10 @@ vanilla screenshots.
 - **Baking spread over frames** (1.9.0): changed frames used to be baked during the game tick, with no time limit,
   so the frame that held a tick (the frames that make the 1% lows) also paid for the baking. They are now baked at the
   start of a frame, within about 2 ms per frame.
-- **Works together with Voltum** (1.9.0): with Voltum 1.7.4 or later, the two mods share one baking budget per frame
-  (about 2 ms in total instead of 2 ms each), and frames use Voltum's hide behind blocks test and its cache: one test
-  budget instead of two, and a block change that does not change which blocks are solid (a redstone clock, a door)
-  no longer makes the frames start their test over. Without Voltum, Fast ImageFrames works as before.
 - **Faster hide behind blocks test** (1.9.0): the test walks the blocks between the camera and a frame, slab by
   slab. The outline of each slab is now built from four values prepared once per test axis, with two edges per slab
   instead of eight divisions: same result for every box (checked on 33 million random cases), each test about 1.7
-  times faster. Voltum 1.7.5 has the same change for the shared test.
+  times faster.
 - **Glow item frames too**: normal and glow item frames are optimized the same way, and a change of light (torches,
   dynamic lights) does not rebuild anything.
 - **No useless map updates**: the game no longer rebuilds a whole map texture when a packet only moves markers.
@@ -96,7 +92,6 @@ about 800 FPS with Fast ImageFrames.
 
 ## Compatibility
 - Minecraft **1.21.4 to 1.21.11** and **26.1 to 26.3** on Fabric.
-- **Voltum** (heads, signs, banners, armor stands): made to be used together, see above.
 - **Sodium**, **Lithium**, **Iris**, even with shader packs, **ImmediatelyFast**, **Entity Culling**, **FerriteCore**, **ETF**, **EMF**, etc. (it should be compatible with every mod).
 
 ## Known incompatibilities
